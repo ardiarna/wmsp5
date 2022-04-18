@@ -1,0 +1,158 @@
+<?xml version="1.0"?>
+<menu>
+  <item text="Master Data" id="master">
+    <item text="Produksi" id="master_production" enabled="false">
+      <item text="Line Packing" id="master_production_packing_lines">
+        <userdata name="href">production/PackingLines.php</userdata>
+      </item>
+      <item text="Daftar Motif" id="master_production_motifs" enabled="false">
+        <userdata name="href">production/PalletMotifs.php</userdata>
+      </item>
+    </item>
+    <item text="Logistik (GBJ)" id="master_logistics">
+      <item text="Area Palet" id="master_logistics_area">
+        <userdata name="href">FrmMstArea.php</userdata>
+      </item>
+    </item>
+    <item text="QA/QC" id="master_qa">
+      <item text="Kuantitas Palet" id="master_qa_pallet_quantity" enabled="false">
+        <userdata name="href">qa/MasterPalletQuantity.php</userdata>
+      </item>
+      <item text="Size Palet" id="master_qa_pallet_size" enabled="false">
+        <userdata name="href">qa/MasterPalletSize.php</userdata>
+      </item>
+      <item text="Ket. Downgrade" id="master_qa_downgrade_reasons">
+        <userdata name="href">qa/MasterDowngradePalletReasons.php</userdata>
+      </item>
+    </item>
+    <item text="Sales" id="master_sales" enabled="false">
+      <item text="Pelanggan" id="master_sales_customers" enabled="false">
+        <userdata name="href">sales/Customers.php</userdata>
+      </item>
+      <item text="Transporter" id="master_sales_transporters" enabled="false">
+        <userdata name="href">sales/Transporters.php</userdata>
+      </item>
+    </item>
+  </item>
+  <item type="separator"/>
+  <item text="Lokasi Palet" id="location">
+    <item text="Penentuan Lokasi" id="location_add">
+      <userdata name="href">location/AddSinglePalletToLocation.php</userdata>
+    </item>
+    <item type="separator"/>
+    <item text="Pemindahan Lokasi Palet" id="location_move">
+      <userdata name="href">location/MovePalletsByLocationId.php</userdata>
+    </item>
+    <item text="Penghapusan Lokasi Palet" id="location_del">
+      <userdata name="href">location/RemovePalletsFromLocation.php</userdata>
+    </item>
+    <item type="separator"/>
+    <item text="Block Quantity" id="block_quantity">
+      <userdata name="href">location/BlockQuantity.php</userdata>
+    </item>
+    <item text="Daftar Block Quantity" id="block_quantity_list">
+      <userdata name="href">location/BlockQuantityList.php</userdata>
+    </item>
+    <item type="separator"/>
+    <item text="Daftar Palet Per Area/Baris" id="location_pallet_list">
+      <userdata name="href">location/PalletsPerLine.php</userdata>
+    </item>
+    <item type="separator"/>
+    <item text="Daftar Palet Tidak Ada Lokasi" id="location_no_location">
+      <userdata name="href">reports/stock/PalletsWithoutLocation.php</userdata>
+    </item>
+  </item>
+  <item type="separator"/>
+  <item text="QA" id="qa">
+    <item text="Blokir Palet" id="qa_block" enabled="false">
+      <userdata name="href">qa/BlockPallets.php</userdata>
+    </item>
+    <item type="separator"/>
+    <item text="Downgrade Palet" id="qa_downgrade">
+      <userdata name="href">qa/DowngradePallets.php</userdata>
+    </item>
+    <item type="separator"/>
+    <item text="Daftar Palet Terblokir" id="qa_blocked_pallets" enabled="false">
+      <userdata name="href">qa/BlockedPallets.php</userdata>
+    </item>
+    <item type="separator"/>
+    <item text="Pembatalan Serah Terima Palet" id="qa_cancel_handover" enabled="false">
+      <userdata name="href">FrmBatalSrhTrmPallet.html</userdata>
+    </item>
+  </item>
+  <item type="separator"/>
+  <item text="Laporan Stok" id="stock">
+    <item text="Ringkasan Stok untuk Penjualan" id="stock_summary_for_sales">
+      <userdata name="href">reports/stock/SummaryByMotifGroupWithRimpil.php</userdata>
+    </item>
+    <item type="separator"/>
+    <item text="Mutasi Stok per Motif" id="stock_mutation_summary_by_motif">
+      <userdata name="href">reports/stock/MutationSummaryByMotif.php</userdata>
+    </item>
+    <item text="Laporan Detail Mutasi" id="stock_detail_mutasi" enabled="true">
+      <userdata name="href">reports/stock/FrmStockSalesReport.html</userdata>
+    </item>
+    <item text="Laporan Sales dan Produksi Bulanan per Motif" id="sales_dan_produksi_bulanan_motif" enabled="true">
+      <userdata name="href">location/SalesDanProduksiBulanan.php</userdata>
+    </item>
+    <item text="Laporan Sales dan Produksi Bulanan per Tipe" id="sales_dan_produksi_bulanan_tipe" enabled="true">
+      <userdata name="href">location/SalesDanProduksiBulananTipe.php</userdata>
+    </item>
+    <item text="Laporan Aging" id="laporan_aging" enabled="true">
+      <userdata name="href">location/LapAging.php</userdata>
+    </item>
+    <item text="Rekam Jejak Palet" id="stock_pallet_history" enabled="false">
+      <userdata name="href">reports/stock/PalletHistory.php</userdata>
+    </item>
+  </item>
+  <item type="separator"/>
+  <item text="Pemuatan" id="shipping" enabled="false">
+    <item text="Berita Acara Muat" id="shipping_shipping_orders" enabled="false">
+      <item text="Reguler (Marketing)" id="shipping_shipping_orders_marketing" enabled="false">
+        <userdata name="href">shipping/ShippingOrdersMarketing.php</userdata>
+      </item>
+      <item text="Lokal (Pabrik)" id="shipping_shipping_orders_local" enabled="false">
+        <userdata name="href">shipping/ShippingOrdersLocal.php</userdata>
+      </item>
+      <item text="Plant Lain" id="shipping_shipping_orders_others" enabled="false">
+        <userdata name="href">shipping/ShippingOrdersOthers.php</userdata>
+      </item>
+    </item>
+    <item text="Surat Jalan" id="shipping_delivery_orders" enabled="false">
+      <item text="Reguler (Marketing)" id="shipping_delivery_orders_marketing" enabled="false">
+        <userdata name="href">shipping/DeliveryOrdersMarketing.php</userdata>
+      </item>
+      <item text="Lokal (Pabrik)" id="shipping_delivery_orders_local" enabled="false">
+        <userdata name="href">shipping/DeliveryOrdersLocal.php</userdata>
+      </item>
+      <item text="Plant Lain" id="shipping_delivery_orders_others" enabled="false">
+        <userdata name="href">shipping/DeliveryOrdersOthers.php</userdata>
+      </item>
+    </item>
+    <item type="separator"/>
+    <item text="Pemenuhan Perintah Muat" id="shipping_order_fulfillment" enabled="false">
+      <userdata name="href">shipping/OrderFulfillment.php</userdata>
+    </item>
+    <item type="separator"/>
+    <item text="Konfirmasi Berat Kendaraan" id="shipping_vehicle_weight_confirmation" enabled="false">
+      <userdata name="href">shipping/VehicleWeightConfirmation.php</userdata>
+    </item>
+  </item>
+  <item type="separator"/>
+  <item text="Administrasi" id="admin" enabled="false">
+    <item text="Pengguna" id="admin_users" enabled="false">
+      <userdata name="href">admin/Users.php</userdata>
+    </item>
+    <item text="Peran Pengguna &amp; Hak Akses" id="admin_user_roles" enabled="false">
+      <userdata name="href">admin/UserRoles.php</userdata>
+    </item>
+    <item type="separator"/>
+    <item text="Akses Halaman" id="admin_module_access" enabled="false">
+      <userdata name="href">admin/ModuleAcl.php</userdata>
+    </item>
+    <item type="separator"/>
+    <item text="Subplant" id="admin_subplant" enabled="false">
+      <userdata name="href">admin/Subplant.php</userdata>
+    </item>
+  </item>
+</menu>

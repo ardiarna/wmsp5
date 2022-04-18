@@ -1,0 +1,651 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+	<link rel="stylesheet" type="text/css" href="../../assets/libs/dhtmlx/dhtmlx.css"/>
+	<script  src="../../assets/libs/dhtmlx/dhtmlx.js"></script>	
+	<script  src="../../assets/js/util.js"></script>	
+	<style>
+     html, body {
+        width: 100%;
+		height: 100%;
+		overflow: hidden;
+		margin: 0px;
+		background-color: #EBEBEB;
+     }
+	div.dhxform_item_label_left.button_width div.dhxform_btn_txt {
+			padding-left: 0px;
+			padding-right: 0px;
+			margin: 0px 0px 0px 0px;
+		}
+		
+  </style>
+  <script >
+ 
+var myGrid,myLayout,myToolbar,myWins,w1,pWins,pW,pGrid,con,acc,formfoc,formSample,formPecah,formEndPallet;
+var dhxWins, w1,myForm,formStructure,myLayout2,myLayout3,myLayout4,myLayout5,myLayout6,myTabbar;
+var myFormfoc,myFormSample,myFormPecah,myFormEndingPallet;
+var frm="FrmStockSalesReportProc.php"; 
+var d = new Date();
+var today = getFormattedDate(d);
+var today1 = getFormattedDate1(d);
+var today2 = getFormattedDate(d);
+
+function doOnLoad() {
+
+		myTabbar = new dhtmlXTabBar({
+            parent: document.body,  // parent container
+           arrows_mode: "auto",
+				tabs: [
+					{ id: "a1", text: "Penjualan", active: true },
+					{ id: "a2", text: "FOC"},
+					{ id: "a3", text: "Sample"},
+					{ id: "a4", text: "Barang Pecah"},
+					{ id: "a5", text: "Detail Saldo Akhir Pallet"},
+				]           // tabs and other config
+        });
+		
+	
+
+	myLayout2 = myTabbar.tabs("a1").attachLayout({
+				pattern: "2E",
+				cells: [
+					{id: "a", text: "Filter Data Penjualan",height:90},
+					{id: "b", text: "inner layout b",header:false}
+				]
+				});
+	dataPenjualan();
+	
+	myLayout3 = myTabbar.tabs("a2").attachLayout({
+				pattern: "2E",
+				cells: [
+					{id: "a", text: "Filter Data FOC",height:90},
+					{id: "b", text: "inner layout b",header:false}
+				]
+				});	
+	dataFOC();
+	
+	myLayout4 = myTabbar.tabs("a3").attachLayout({
+				pattern: "2E",
+				cells: [
+					{id: "a", text: "Filter Data Sample",height:90},
+					{id: "b", text: "inner layout b",header:false}
+				]
+				});	
+	dataSample();	
+	
+	myLayout5 = myTabbar.tabs("a4").attachLayout({
+				pattern: "2E",
+				cells: [
+					{id: "a", text: "Filter Data Barang Pecah",height:90},
+					{id: "b", text: "inner layout b",header:false}
+				]
+				});		
+	dataPecah();	
+	
+	myLayout6 = myTabbar.tabs("a5").attachLayout({
+				pattern: "2E",
+				cells: [
+					{id: "a", text: "Filter Data Akhir Pallet",height:90},
+					{id: "b", text: "inner layout b",header:false}
+				]
+				});
+	dataEndingPallet();
+	
+		
+};
+
+function dataEndingPallet(){
+		var formEndPallet = [
+				{type: "settings", position: "label-left",labelWidth: 70,inputWidth: 160},
+				{type: "block", offsetTop:0,width: 320,blockOffset: 0,list:[
+					{type:"calendar", name: "periode2", button: "calendar_icon",value: today2,readonly:true,dateFormat: "%Y-%m-%d",label:"Periode : ",calendarPosition: "right",inputWidth: 100},
+				//	{type:"newcolumn"},
+				//	{type:"calendar", offsetLeft:10,labelWidth: 120,name: "periode2",label:"Periode : ", button: "calendar_icon"
+				//	,value: today2,readonly:true,dateFormat: "%Y-%m-%d",label:"s/d : ",calendarPosition: "right",inputWidth: 100},
+				]},
+				{type:"newcolumn"},
+				{type: "button",offsetLeft:30, name: "printrek",value: "Print"},
+
+				];	
+				
+			myFormEndingPallet = myLayout6.cells("a").attachForm(formEndPallet);
+		
+		//	myFormEndingPallet.getInput("periode1").style.backgroundImage = "url(../../common/calendar.gif)";
+		//	myFormEndingPallet.getInput("periode1").style.backgroundPosition = "center right";
+		//	myFormEndingPallet.getInput("periode1").style.backgroundRepeat = "no-repeat";
+			myFormEndingPallet.getInput("periode2").style.backgroundImage = "url(../../common/calendar.gif)";
+			myFormEndingPallet.getInput("periode2").style.backgroundPosition = "center right";
+			myFormEndingPallet.getInput("periode2").style.backgroundRepeat = "no-repeat";
+
+	
+			myFormEndingPallet.attachEvent("onButtonClick",function(id){
+			//			tgl1 = getFormattedDate(myFormEndingPallet.getItemValue("periode1"));
+						tgl2 = getFormattedDate(myFormEndingPallet.getItemValue("periode2"));
+						myLayout6.cells("b").attachURL(frm+"?mode=viewendpallet&tgl2="+tgl2);			
+				
+			});
+}
+
+
+function dataPenjualan(){
+		var formSearch = [
+				{type: "settings", position: "label-left",labelWidth: 70,inputWidth: 160},
+				{type: "block", offsetTop:0,width: 320,blockOffset: 0,list:[
+					{type:"calendar", name: "periode1", button: "calendar_icon",value: today1,readonly:true,dateFormat: "%Y-%m-%d",label:"Periode : ",calendarPosition: "right",inputWidth: 100},
+					{type:"newcolumn"},
+					{type:"calendar", offsetLeft:10,labelWidth: 30,name: "periode2", button: "calendar_icon"
+					,value: today2,readonly:true,dateFormat: "%Y-%m-%d",label:"s/d : ",calendarPosition: "right",inputWidth: 100},
+				]},
+				{type:"newcolumn"},
+				{type: "button",offsetLeft:30, name: "printrek",value: "Rekap"},
+				{type:"newcolumn"},
+				{type: "button",offsetLeft:30, name: "print",value: "Detail"},
+				];	
+				
+			myFormSearch = myLayout2.cells("a").attachForm(formSearch);
+		
+			myFormSearch.getInput("periode1").style.backgroundImage = "url(common/calendar.gif)";
+			myFormSearch.getInput("periode1").style.backgroundPosition = "center right";
+			myFormSearch.getInput("periode1").style.backgroundRepeat = "no-repeat";
+			myFormSearch.getInput("periode2").style.backgroundImage = "url(common/calendar.gif)";
+			myFormSearch.getInput("periode2").style.backgroundPosition = "center right";
+			myFormSearch.getInput("periode2").style.backgroundRepeat = "no-repeat";
+
+	
+			myFormSearch.attachEvent("onButtonClick",function(id){
+				if(id=="printrek"){
+						tgl1 = getFormattedDate(myFormSearch.getItemValue("periode1"));
+						tgl2 = getFormattedDate(myFormSearch.getItemValue("periode2"));
+						myLayout2.cells("b").attachURL(frm+"?mode=viewrekhtml&tgl1="+tgl1+"&tgl2="+tgl2);			
+				} else {
+						tgl1 = getFormattedDate(myFormSearch.getItemValue("periode1"));
+						tgl2 = getFormattedDate(myFormSearch.getItemValue("periode2"));
+						myLayout2.cells("b").attachURL(frm+"?mode=viewdethtml&tgl1="+tgl1+"&tgl2="+tgl2);			
+				}
+			});
+}
+
+function dataFOC(){
+		var formfoc = [
+				{type: "settings", position: "label-left",labelWidth: 70,inputWidth: 160},
+				{type: "block", offsetTop:0,width: 320,blockOffset: 0,list:[
+					{type:"calendar", name: "periode1", button: "calendar_icon",value: today1,readonly:true,dateFormat: "%Y-%m-%d",label:"Periode : ",calendarPosition: "right",inputWidth: 100},
+					{type:"newcolumn"},
+					{type:"calendar", offsetLeft:10,labelWidth: 30,name: "periode2", button: "calendar_icon"
+					,value: today2,readonly:true,dateFormat: "%Y-%m-%d",label:"s/d : ",calendarPosition: "right",inputWidth: 100},
+				]},
+				{type:"newcolumn"},
+				{type: "button",offsetLeft:30, name: "print",value: "Search"},
+				];	
+				
+			myFormfoc = myLayout3.cells("a").attachForm(formfoc);
+			
+			myFormfoc.getInput("periode1").style.backgroundImage = "url(common/calendar.gif)";
+			myFormfoc.getInput("periode1").style.backgroundPosition = "center right";
+			myFormfoc.getInput("periode1").style.backgroundRepeat = "no-repeat";
+			myFormfoc.getInput("periode2").style.backgroundImage = "url(common/calendar.gif)";
+			myFormfoc.getInput("periode2").style.backgroundPosition = "center right";
+			myFormfoc.getInput("periode2").style.backgroundRepeat = "no-repeat";
+
+			
+			myFormfoc.attachEvent("onButtonClick",function(id){
+						tgl1 = getFormattedDate(myFormfoc.getItemValue("periode1"));
+						tgl2 = getFormattedDate(myFormfoc.getItemValue("periode2"));
+						myLayout3.cells("b").attachURL(frm+"?mode=viewfoc&tgl1="+tgl1+"&tgl2="+tgl2);			
+			});
+}
+
+
+function dataSample(){
+		var formSample = [
+				{type: "settings", position: "label-left",labelWidth: 70,inputWidth: 160},
+				{type: "block", offsetTop:0,width: 320,blockOffset: 0,list:[
+					{type:"calendar", name: "periode1", button: "calendar_icon",value: today1,readonly:true,dateFormat: "%Y-%m-%d",label:"Periode : ",calendarPosition: "right",inputWidth: 100},
+					{type:"newcolumn"},
+					{type:"calendar", offsetLeft:10,labelWidth: 30,name: "periode2", button: "calendar_icon"
+					,value: today2,readonly:true,dateFormat: "%Y-%m-%d",label:"s/d : ",calendarPosition: "right",inputWidth: 100},
+				]},
+				{type:"newcolumn"},
+				{type: "button",offsetLeft:30, name: "print",value: "Search"},
+				];	
+				
+			myFormSample = myLayout4.cells("a").attachForm(formSample);
+			
+			myFormSample.getInput("periode1").style.backgroundImage = "url(common/calendar.gif)";
+			myFormSample.getInput("periode1").style.backgroundPosition = "center right";
+			myFormSample.getInput("periode1").style.backgroundRepeat = "no-repeat";
+			myFormSample.getInput("periode2").style.backgroundImage = "url(common/calendar.gif)";
+			myFormSample.getInput("periode2").style.backgroundPosition = "center right";
+			myFormSample.getInput("periode2").style.backgroundRepeat = "no-repeat";
+			
+			myFormSample.attachEvent("onButtonClick",function(id){
+						tgl1 = getFormattedDate(myFormSample.getItemValue("periode1"));
+						tgl2 = getFormattedDate(myFormSample.getItemValue("periode2"));
+						myLayout4.cells("b").attachURL(frm+"?mode=viewsample&tgl1="+tgl1+"&tgl2="+tgl2);			
+			});
+}
+
+function dataPecah(){
+		var formPecah = [
+				{type: "settings", position: "label-left",labelWidth: 70,inputWidth: 160},
+				{type: "block", offsetTop:0,width: 320,blockOffset: 0,list:[
+					{type:"calendar", name: "periode1", button: "calendar_icon",value: today1,readonly:true,dateFormat: "%Y-%m-%d",label:"Periode : ",calendarPosition: "right",inputWidth: 100},
+					{type:"newcolumn"},
+					{type:"calendar", offsetLeft:10,labelWidth: 30,name: "periode2", button: "calendar_icon"
+					,value: today2,readonly:true,dateFormat: "%Y-%m-%d",label:"s/d : ",calendarPosition: "right",inputWidth: 100},
+				]},
+				{type:"newcolumn"},
+				{type: "button",offsetLeft:30, name: "print",value: "Search"},
+				];	
+				
+			myFormPecah = myLayout5.cells("a").attachForm(formPecah);
+		
+			myFormPecah.getInput("periode1").style.backgroundImage = "url(common/calendar.gif)";
+			myFormPecah.getInput("periode1").style.backgroundPosition = "center right";
+			myFormPecah.getInput("periode1").style.backgroundRepeat = "no-repeat";
+			myFormPecah.getInput("periode2").style.backgroundImage = "url(common/calendar.gif)";
+			myFormPecah.getInput("periode2").style.backgroundPosition = "center right";
+			myFormPecah.getInput("periode2").style.backgroundRepeat = "no-repeat";
+			
+			myFormPecah.attachEvent("onButtonClick",function(id){
+						tgl1 = getFormattedDate(myFormPecah.getItemValue("periode1"));
+						tgl2 = getFormattedDate(myFormPecah.getItemValue("periode2"));
+						myLayout5.cells("b").attachURL(frm+"?mode=viewPecah&tgl1="+tgl1+"&tgl2="+tgl2);			
+			});
+}
+
+
+
+function formatNumber (num) {
+    return num.toString().replace(/(\d)(?=(\d{3})+(?!\d))/g, "$1,")
+}
+
+function sumc1(){
+			var out = 0;
+			for(var i=0;i<myGrid.getRowsNum();i++){
+				out+= parseFloat(myGrid.cells2(i,6).getValue())
+			}
+			return out;
+}
+function cfv1(stage){
+			if(stage && stage!=2)
+				return true;
+			var n1 = document.getElementById("jumqty");
+				n1.innerHTML = formatNumber(sumc1());
+			return true;
+}
+
+
+function print(){
+	pl = myFormSearch.getItemValue("plant");
+	tp = myFormSearch.getItemValue("tpstock");
+	dhxWins = new dhtmlXWindows();
+	var wprint = dhxWins.createWindow("wprint", 0,0, 800,440);
+		wprint.centerOnScreen();
+		wprint.setText("Print Stock Barang");
+		wprint.button("park").hide();
+		wprint.setModal(true);
+		wprint.allowResize();
+		wprint.maximize();
+		wprint.attachURL(frm+"?mode=cetak&pl="+pl+"&tp="+tp);	
+}
+
+function printrep(){
+	pl = myFormSearch.getItemValue("plant");
+	tp = myFormSearch.getItemValue("tpstock");
+	dhxWins = new dhtmlXWindows();
+	var wprint = dhxWins.createWindow("wprint", 0,0, 800,440);
+		wprint.centerOnScreen();
+		wprint.setText("Print Rekap Stock Barang");
+		wprint.button("park").hide();
+		wprint.setModal(true);
+		wprint.allowResize();
+		wprint.maximize();
+		wprint.attachURL(frm+"?mode=cetakrek&pl="+pl+"&tp="+tp);	
+}
+
+function format_supp(name, value) {return "<a href='javascript:void(0);' onclick='coasupp();'><img border='0' src='assets/imgs/search1.png' width='22' height='25'></a></div>";}
+function add(){
+	cwin("new");
+}
+function coasupp() {VGrpCust('d');}
+function VGrpCust(id){
+	pWins = new dhtmlXWindows();
+	pW = pWins.createWindow("w1", 0,0, 600,300);
+	pW.centerOnScreen();
+	pW.setText("Daftar Area");
+
+	pW.button("park").hide();
+	pW.setModal(true);
+	pW.button("minmax1").hide();
+	
+		pGrid = pW.attachGrid();
+		pGrid.setImagePath("assets/libs/dhtmlx/imgs/");
+
+			pGrid.setHeader("No,Kode,Nama Area",null,["text-align:center;","text-align:center;"]); 
+			pGrid.setColTypes("ro,ro,ro"); 
+			pGrid.setInitWidths("40,100,*");
+			pGrid.attachHeader(",#text_filter,#text_filter,#text_filter,#text_filter,#text_filter");
+		pGrid.setColAlign("center,center,left");
+		pGrid.setColSorting("str,str,str");
+		
+		pGrid.attachEvent("onXLS",function(){ myLayout.progressOn();});
+		pGrid.attachEvent("onXLE",function(){ myLayout.progressOff()});
+		pGrid.init();	
+			
+
+		pGrid.loadXML(frm+"?mode=dtarea");
+	
+		pGrid.attachEvent("onRowDblClicked", function(rId,cInd){
+		
+		var nid=rId;
+		var nm=pGrid.cells(pGrid.getSelectedId(),2).getValue();
+				myFormSearch.setItemValue("kdcust",nid);
+				myFormSearch.setItemValue("nmcust",nm);
+				//alert(nid);
+				myFormSearch.getCombo("baris").clearAll();
+				myFormSearch.getCombo("baris").load(frm+"?mode=cbosat&kd="+nid);
+				//myFormSearch.setItemValue("satbrg","1");
+				myFormSearch.getCombo("baris").selectOption(1);
+				pW.close();
+	});  
+}
+function frmopn(){
+formData = [
+				{type: "settings", position: "label-left", labelWidth: 120, inputWidth: 400},
+				{type: "block", inputWidth: "auto", offsetTop: 12, list: [
+					{type: "input", name: "nopallet",label: "No.Pallet :",maxLength: 17,style:"text-transform: uppercase; font-size: 40px !important;"},
+					{type: "input", name: "nolokasi",label: "Lokasi :",maxLength: 8,style:"text-transform: uppercase; font-size: 40px !important;"},
+					{type: "label", label: "Detail Pallet"},
+					{type: "input", name: "kdmotif",label: "Kode Barang :",readonly:true},
+					{type: "input", name: "motif",label: "Motif :",readonly:true},
+					{type: "input", name: "qua",label: "Qualitas :",readonly:true},
+					{type: "input", name: "shad",label: "Shading :",readonly:true},
+					{type: "input", name: "size",label: "Size :",readonly:true},
+					{type: "input", name: "qty",label: "Qty :"},
+					]}
+			];
+			
+		myForm = myLayout.cells("a").attachForm(formData);	
+			myForm.setFocusOnFirstActive("nopallet");
+			myForm.setFontSize("16px");
+			
+					
+			myForm.attachEvent("onKeyUp",function(inp, ev, id,value){
+				if(id=="nopallet" || id=="nolokasi"){
+			myForm.setItemValue(id,myForm.getItemValue(id).toUpperCase());
+		}
+			
+			if(id=="nopallet"){
+					var pjg=myForm.getItemValue(id).length;
+					
+					if(pjg==17){
+						var ind2=myForm.getItemValue(id);
+						myForm.load(frm+"?mode=load&kd="+ind2);
+						/*
+						window.dhx4.ajax.get(frm+"?mode=sheet1&kd="+ind2,function(loader){
+							if(loader.xmlDoc.responseText==""){
+								dhtmlx.message({ text:"No Pallet tidak ada dalam database"});
+								return false;
+							} else {
+								myForm.setItemValue("motif",loader.xmlDoc.responseText);
+							}
+						});
+						*/						
+						myForm.setItemFocus("nolokasi");
+//						myForm.setFocusOnFirstActive("nolokasi");
+					}
+			}
+			if(id=="nolokasi"){
+					var pjg2=myForm.getItemValue(id).length;
+					
+					if(pjg2==8){
+					//	alert(pjg);
+						myForm.setItemFocus("nopallet");
+//						myForm.setFocusOnFirstActive("nolokasi");
+						//myForm.clear();
+						
+						myForm.send(frm+"?mode=save", "post", function(loader, response){
+						myForm.clear();
+						myGrid.clearAll();
+//						myGrid.loadXML(frm+"?mode=view");
+						var kdcust=myFormSearch.getItemValue("kdcust");
+						myGrid.loadXML(frm+"?mode=view&kd="+kdcust);
+							/*
+							if(response=="OK"){
+								dhtmlx.alert({
+								title: comapp,
+								text:" Data Saved"});
+								w1.close();
+								myGrid.clearAll();
+								myGrid.loadXML(frm+"?mode=view");
+								} else {
+								dhtmlx.alert({
+								title: comapp,
+								type:"alert-warning",
+								text:response});
+							}
+							*/
+						});	
+						
+						
+					}
+			}
+		}); 
+}
+
+function cwin(mode){
+
+	dhxWins = new dhtmlXWindows();
+	//dhxWins.setImagePath("assets/libs/dhtmlx/imgs/");
+	var w1 = dhxWins.createWindow("w1", 0,0, 600,400);
+		w1.centerOnScreen();
+		w1.setText("Order Sheet");
+		w1.button("park").hide();
+		w1.setModal(true);
+		w1.allowResize();
+		//w1.maximize();
+
+	var formStructure = [
+	
+			{type: "settings", position: "label-left",labelAlign:"left",labelWidth: 130,inputWidth: 230,},
+			{type: "block", width: 500,offsetLeft:10, offsetTop:10,list:[
+			
+			{type: "fieldset",  name: "mydata1", label:"Detail", width:500,list:[
+					{type:"input", name: "nopo", label:"No.Order : ",inputWidth: 100,readonly:true},
+					{type:"calendar", name: "tglpo", button: "calendar_icon",readonly:true, value: today,label:"Tanggal Order : ",calendarPosition: "right",inputWidth: 100,required: true},
+				{type: "block", offsetTop:0,offsetLeft:0,width: 450,blockOffset: 0,list:[
+						{type:"input", name: "kdsh1", label:"Kode Sheet: ",inputWidth: 50,validate:"M4",required: true,maxLength: 4,style:"text-transform: uppercase;"},
+						{type:"newcolumn"},
+						{type:"input", name: "subsh", inputWidth: 250,required: true,style:"text-transform: uppercase;"},
+						
+				]},
+				{type:"input", name: "kdsh2", hidden:true,inputWidth: 100,maxLength: 8,validate:"M8"},
+				{type: "block", offsetTop:0,offsetLeft:0,width: 450,blockOffset: 0,list:[
+						{type:"input", name: "psh", label:"ukuran (mm) : ",inputWidth: 50,required: true,maxLength: 4},
+						{type:"newcolumn"},
+						{type:"input", label:"x",name: "lsh",offsetLeft:10, inputWidth: 50,labelWidth: 10,required: true,maxLength: 4},
+				]},
+				{type:"input", name: "qty", label:"Qty : ",inputWidth: 100},
+				{type:"input", name: "hrgsh", label:"Creasing : ",inputWidth: 200},
+				{type:"input", name: "ket", label:"Keterangan : ",inputWidth: 300},
+				{type:"calendar", name: "tglkrmpo", button: "calendar_icon",readonly:true,value: today,label:"Tanggal Kirim : ",calendarPosition: "right",inputWidth: 100},				
+			]},
+			{type: "fieldset",  name: "mydata2", label: "Save & Close", width:500, list:[	
+				{type: "block", offsetTop:0,offsetLeft:110,list:[
+						{type: "button", name: "save",value: "Save"},
+						{type:"newcolumn"},
+						{type: "button", name: "close",value: "Close"}
+				]}
+			]},
+			]},
+			];
+			
+//	myForm = w1.attachForm(formStructure);
+	
+	myForm = myLayout.cells("a").attachForm(formStructure);
+//			myForm.loadStruct(formStructure);
+	
+	myForm.enableLiveValidation(true);
+			
+	myForm.setFontSize("50px");
+	//myForm.hideItem("mydata1");
+	
+		myCalendar = new dhtmlXCalendarObject(myForm.getInput("tglpo"));
+	myForm.getInput("tglpo").style.backgroundImage = "url(common/calendar.gif)";
+	myForm.getInput("tglpo").style.backgroundPosition = "center right";
+	myForm.getInput("tglpo").style.backgroundRepeat = "no-repeat";
+	myCalendar1 = new dhtmlXCalendarObject(myForm.getInput("tglkrmpo"));
+		myForm.getInput("tglkrmpo").style.backgroundImage = "url(common/calendar.gif)";
+	myForm.getInput("tglkrmpo").style.backgroundPosition = "center right";
+	myForm.getInput("tglkrmpo").style.backgroundRepeat = "no-repeat";
+
+	//myForm.setFocusOnFirstActive("grpcode");
+	if(mode=="edit"){
+		//alert("Button with name "+myGrid.getSelectedId()+" was clicked");
+		myForm.setFocusOnFirstActive("grpdesc");
+		myForm.load(frm+"?mode=load&kd="+myGrid.getSelectedId());
+	};
+	
+	myForm.attachEvent("onKeyUp",function(inp, ev, id){
+		if(id=="kdsh1" || id=="kdsh2" || id=="subsh" ){
+			myForm.setItemValue(id,myForm.getItemValue(id).toUpperCase());
+		}
+	});
+	
+	myForm.attachEvent("onKeyDown",function(inp, ev, id){
+		if(id=="qty"){validateNumber(ev);}
+	});
+	
+	myForm.attachEvent("onButtonClick",function(id){
+		//alert("Button with name "+id+" was clicked");
+		if(id=="save"){
+		//alert("Button with name "+mode+" was clicked");
+			if(!myForm.validate()) {
+				dhtmlx.alert({title: comapp,type:"alert-warning",text:"Input not Complete"});
+			} else { 
+				myForm.send(frm+"?mode=save&stat="+mode+"&kd="+myGrid.getSelectedId(), "post", function(loader, response){
+					if(response=="OK"){
+							dhtmlx.alert({
+							title: comapp,
+							text:" Data Saved"});
+							w1.close();
+							myGrid.clearAll();
+							myGrid.loadXML(frm+"?mode=view");
+							} else {
+							dhtmlx.alert({
+							title: comapp,
+							type:"alert-warning",
+							text:response});
+							}
+						});
+			}
+		} else if(id=="close"){ 
+			dhtmlx.confirm({title: comapp,text:"Exit ?",ok:"Yes",cancel:"No",callback:function(index){
+				if(index){ w1.close();}
+				}
+		});
+		}
+  })
+	
+};
+
+function M4(data){
+	if (data.length < 4) {
+		dhtmlx.message({ text:"Kode Awal Sheet 4 Digit"});return false;
+	} else { 
+		window.dhx4.ajax.get(frm+"?mode=sheet1&kd="+data,function(loader){
+		if(loader.xmlDoc.responseText==""){
+			dhtmlx.message({ text:"Kode Sheet ada Kesalahan"});
+			return false;
+		} else {
+			myForm.setItemValue("subsh",loader.xmlDoc.responseText);
+		}
+	});	
+	}
+}
+
+function M8(data){
+	if (data.length < 8) {
+		dhtmlx.message({ text:"Kode Akhir Sheet 8 Digit"});return false;
+	} else { 
+		n=(data.substring(0,4)/10)
+		m=(data.substring(4,8)/10)
+		myForm.setItemValue("psh",n);
+		myForm.setItemValue("lsh",m);
+	}
+}
+
+function del(){
+	if(myGrid.getSelectedId()==null){dhtmlx.alert({title: comapp,type:"alert-warning",text:"Pilih Data Yang Akan Di Hapus.."});
+		return false;}
+			dhtmlx.confirm({
+						type:"confirm-warning",
+						title: comapp,
+						text:"Delete record "+myGrid.getSelectedId()+" ?",ok:"Yes",cancel:"No",
+						callback:
+							function(index){
+								if(index){
+								    window.dhx4.ajax.get(frm+"?mode=del&kd="+myGrid.getSelectedId(),function(loader){
+									if(loader.xmlDoc.responseText=="OK"){
+											dhtmlx.alert({
+												title: comapp,
+												text:" Data Deleted"});
+												 myGrid.clearAll();
+												 myGrid.loadXML(frm+"?mode=view");
+										} else {
+											dhtmlx.alert({
+											title: comapp,
+											type:"alert-warning",
+											text:loader.xmlDoc.responseText});
+										}
+									});			
+								}
+							}
+			});
+};
+
+
+function edit(){
+if(myGrid.getSelectedId()==null){
+		dhtmlx.alert({title: comapp,type:"alert-warning",text:"Pilih Data Yang Akan Di Edit.."});
+	} else { cwin("edit");}
+}
+
+function validateNumber(evt) {
+    var e = evt || window.event;
+    var key = e.keyCode || e.which;
+
+    if (!e.shiftKey && !e.altKey && !e.ctrlKey &&
+    // numbers   
+    key >= 48 && key <= 57 ||
+    // Numeric keypad
+    key >= 96 && key <= 105 ||
+    // Backspace and Tab and Enter
+    key == 8 || key == 9 || key == 13 ||
+    // Home and End
+    key == 35 || key == 36 ||
+    // left and right arrows
+    key == 37 || key == 39 ||
+	
+	key == 190 || key == 110 || 
+    // Del and Ins
+    key == 46 || key == 45) {
+        // input is VALID
+ // comma, period and minus, . on keypad
+  //key == 190 || key == 188 || key == 109 || key == 110 ||
+		}
+    else {
+        // input is INVALID
+        e.returnValue = false;
+        if (e.preventDefault) e.preventDefault();
+		}
+}
+
+
+  </script>	
+    </head>
+   <body onload="doOnLoad()">
+
+   </body>
+</html> 

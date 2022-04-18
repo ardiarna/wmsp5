@@ -1,0 +1,34 @@
+{
+  "name": "arwana/gbj-wms-legacy",
+  "description": "Web-based WMS Application, legacy version",
+  "minimum-stability": "stable",
+  "license": "proprietary",
+  "authors": [
+    {
+      "name": "Alvin Natawiguna",
+      "email": "alvin.natawiguna@arwanacitra.com"
+    },
+    {
+      "name": "Budi Susanto",
+      "email": "budi.susanto@arwanacitra.com"
+    },
+    {
+      "name": "Ardi Fianto",
+      "email": "ardi@arwanacitra.com"
+    }
+  ],
+  "require": {
+    "ext-pgsql": "*",
+    "ext-json": "*",
+    "ext-simplexml": "*",
+    "ext-zip": "*",
+    "ext-openssl": "*",
+    "vlucas/phpdotenv": "^2.5",
+    "phpmailer/phpmailer": "~5.2",
+    "phpoffice/phpexcel": "^1.8",
+    "monolog/monolog": "^1.0"
+  },
+  "autoload": {
+    "psr-0": { "": "classes/" }
+  }
+}

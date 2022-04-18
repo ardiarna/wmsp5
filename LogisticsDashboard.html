@@ -1,0 +1,1775 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <title>Logistics Dashboard</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+
+  <link rel="stylesheet" type="text/css" href="assets/libs/dhtmlx/dhtmlx.css"/>
+  <link rel="stylesheet" type="text/css" href="assets/fonts/font_awesome/css/font-awesome.min.css"/>
+  <link rel="stylesheet" type="text/css" href="assets/fonts/font_roboto/roboto.css"/>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0px;
+      padding: 0px;
+      overflow: hidden;
+    }
+  </style>
+
+  <script src="assets/libs/dhtmlx/dhtmlx.js"></script>
+  <script src="assets/libs/moment/moment-with-locales.min.js"></script>
+  <script src="assets/libs/axios/axios.min.js"></script>
+  <script src="assets/libs/pdfmake/pdfmake.min.js"></script>
+  <script src="assets/libs/pdfmake/vfs_fonts.js"></script>
+  <script src="assets/libs/js-cookie/js.cookie.min.js"></script>
+
+  <script src="assets/js/date-utils.js"></script>
+  <script src="assets/js/grid-utils-20190704-01.js"></script>
+  <script src="assets/js/grid-custom-types-20190704-01.js"></script>
+  <script src="assets/js/WMSApi-20220328.js"></script>
+  <script src="assets/js/ParseError.js"></script>
+  <script src="assets/js/timer.js"></script>
+  <script src="assets/js/error-handler.js"></script>
+  <script>
+    const dashboard = function (moment, WMSApi, gridUtils, pdfMake, Cookies, Timer, handleApiError) {
+      "use strict";
+
+      const USERID = Cookies.get('userid');
+      const SUBPLANTS_LOCATION = [];
+      const SUBPLANTS_PRODUCTION = [];
+
+      const ROOT_LAYOUT_PALLETS_BY_AREA_ID = 'a';
+      const ROOT_LAYOUT_PALLETS_BY_MOTIF_ID = 'b';
+      const AGGREGATE_MODES = ['all', 'other', 'local'];
+
+      moment.locale('id');
+      moment.defaultFormat = 'D MMM YYYY, HH:mm:ss';
+
+      const TEXT_LEFT_ALIGN = 'text-align:left';
+      const TEXT_RIGHT_ALIGN = 'text-align:right;padding-right:10px;';
+      const TEXT_CENTER_ALIGN = 'text-align:center';
+      const TEXT_BOLD = 'font-weight: bold;';
+
+      const HEADER_TEXT_FILTER = gridUtils.headerFilters.TEXT;
+      const HEADER_NUMERIC_FILTER = gridUtils.headerFilters.NUMERIC;
+      const HEADER_SELECT_FILTER = gridUtils.headerFilters.SELECT;
+
+      let palletsByAreaToolbarItemCount, palletsByAreaSelectedSubplant;
+      let palletsByAreaGrid, palletsByAreaCell;
+
+      function setupPalletsByAreaCell(cell) {
+        palletsByAreaCell = cell;
+        const toolbarItems = [
+          {type: 'text', id: 'timestamp', text: ''},
+          {type: 'separator'},
+          {type: 'button', id: 'refresh', text: 'Segarkan', img: 'fa fa-refresh', imgdis: 'fa fa-refresh'},
+          {type: 'spacer'},
+          {type: 'text', id: 'text-subplant', text: 'Lokasi'},
+          {type: 'separator'}
+        ];
+        palletsByAreaToolbarItemCount = toolbarItems.length;
+        const toolbar = cell.attachToolbar({
+          iconset: 'awesome',
+          items: toolbarItems
+        });
+
+        // setup grid skeleton first
+        const grid = cell.attachGrid();
+        grid.setHeader('KD. GDG.,KD,AREA,TTL. PLT.,TTL. QTY', null,
+          [TEXT_RIGHT_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_RIGHT_ALIGN, TEXT_RIGHT_ALIGN]
+        );
+        grid.attachHeader([HEADER_SELECT_FILTER, '', HEADER_TEXT_FILTER, HEADER_NUMERIC_FILTER, HEADER_NUMERIC_FILTER]);
+
+        grid.setColumnIds('location_warehouse_id,location_area_id,location_area_name,pallet_count,total_quantity');
+        grid.setColSorting("str,str,str,int,int");
+        grid.setColTypes("ro,ro,ro,ron,ron");
+        grid.setInitWidths("80,40,*,100,100");
+
+        grid.setColAlign("right,left,left,right,right");
+        grid.attachFooter(['', 'Grand Total', '#cspan', '#stat_total', '#stat_total'],
+          ['', TEXT_RIGHT_ALIGN + TEXT_BOLD, '', TEXT_RIGHT_ALIGN + TEXT_BOLD, TEXT_RIGHT_ALIGN + TEXT_BOLD]);
+        grid.setNumberFormat("0,000", grid.getColIndexById('pallet_count'), ",", ".");
+        grid.setNumberFormat("0,000", grid.getColIndexById('total_quantity'), ",", ".");
+        grid.init();
+
+        grid.attachEvent('onRowDblClicked', rowId => {
+          const rowVals = grid.getRowData(rowId);
+          openPalletsByAreaDetailsWindow(windows, rowVals.location_warehouse_id, rowVals.location_area_id, rowVals.location_area_name);
+        });
+        palletsByAreaGrid = grid;
+
+        // setup toolbar interaction with grid
+        toolbar.attachEvent('onClick', id => {
+          if (id === 'refresh') {
+            fetchPalletsByAreaSummary(palletsByAreaSelectedSubplant)
+              .then(() => {
+                refreshPalletByAreaSummaryTimer.reset(DEFAULT_INTERVAL_LENGTH)
+              })
+          }
+        });
+        toolbar.attachEvent('onBeforeStateChange', id => {
+          return id !== palletsByAreaSelectedSubplant;
+        });
+        toolbar.attachEvent('onStateChange', (id, newIsActive) => {
+          if (newIsActive) {
+            palletsByAreaSelectedSubplant = id;
+            fetchPalletsByAreaSummary(palletsByAreaSelectedSubplant)
+              .then(() => {
+                refreshPalletByAreaSummaryTimer.reset(DEFAULT_INTERVAL_LENGTH)
+              });
+
+            grid.setColumnHidden(grid.getColIndexById('subplant'), SUBPLANTS_LOCATION.length === 1);
+
+            // disable other subplants
+            toolbar.forEachItem(itemId => {
+              const itemType = toolbar.getType(itemId);
+              if (itemType === 'buttonTwoState' && itemId !== palletsByAreaSelectedSubplant) {
+                toolbar.setItemState(itemId, false);
+              }
+            })
+          }
+        })
+      }
+
+      function openPalletsByAreaDetailsWindow(windows, warehouseId, areaId, areaName) {
+        // open summary of pallet by area,
+        // create windowCell
+        const windowCell = windows.createWindow('w1', 0, 0, 750, 450);
+        windowCell.centerOnScreen();
+        windowCell.setModal(true);
+        windowCell.button("park").hide();
+        windowCell.button("minmax1").hide();
+
+        const title = `Palet Dalam Gudang ${warehouseId} - ${areaName}`;
+        windowCell.setText(title);
+
+        const windowToolbar = windowCell.attachToolbar({
+          iconset: 'awesome',
+          items: [
+            {type: 'button', id: 'refresh', text: 'Segarkan', img: 'fa fa-refresh'},
+            {type: 'separator'},
+            {type: 'button', id: 'clear_filters', text: 'Bersihkan Penyaring Data', img: 'fa fa-close'},
+            {type: 'separator'},
+            {type: 'button', id: 'print', text: 'Cetak', img: 'fa fa-print'},
+            {type: 'button', id: 'export_csv', text: 'Ke CSV', img: 'fa fa-file-excel-o'},
+            {type: 'button', id: 'export_pdf', text: 'Ke PDF', img: 'fa fa-file-pdf-o'},
+            {type: 'spacer'},
+            {type: 'text', id: 'timestamp', text: ''}
+          ]
+        });
+        windowToolbar.attachEvent('onClick', itemId => {
+          const filename = `${moment().format('YYYY-MM-DD')} - ${title}`;
+          switch (itemId) {
+            case 'refresh':
+              fetchPalletsByAreaDetails(warehouseId, areaId)
+                .then(() => {
+                  refreshPalletByAreaSummaryTimer.reset(DEFAULT_INTERVAL_LENGTH);
+                });
+              break;
+            case 'clear_filters':
+              gridUtils.clearAllGridFilters(windowGrid);
+              break;
+            case 'print':
+              gridUtils.generateFilteredPdf(windowGrid, title, USERID)
+                .getBlob(blob => {
+                  gridUtils.openPDFWindow(title, filename, blob, windowCell, windows)
+                }, {autoPrint: true});
+              break;
+            case 'export_csv':
+              gridUtils.downloadFilteredCSV(windowGrid, filename);
+              break;
+            case 'export_pdf':
+              gridUtils.generateFilteredPdf(windowGrid, title, USERID)
+                .download(filename);
+              break;
+          }
+        });
+
+        // setup grid
+        const windowGrid = windowCell.attachGrid();
+        windowGrid.setHeader(['BRS.', 'SUBP.', 'KD MOTIF', 'DIM.', 'QLTY', 'MOTIF', 'SIZE', 'SHADING', 'STS.', 'TTL. PLT.', 'TTL. QTY'], null,
+          [TEXT_RIGHT_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_RIGHT_ALIGN, TEXT_RIGHT_ALIGN]);
+        windowGrid.attachHeader([HEADER_NUMERIC_FILTER, HEADER_SELECT_FILTER, '&nbsp;', HEADER_SELECT_FILTER, HEADER_SELECT_FILTER, HEADER_TEXT_FILTER, HEADER_SELECT_FILTER, HEADER_SELECT_FILTER, HEADER_SELECT_FILTER, HEADER_NUMERIC_FILTER, HEADER_NUMERIC_FILTER]);
+        windowGrid.attachFooter(['', '', '', 'Total', '#cspan', '#cspan', '#cspan', '#cspan', '#cspan', '#stat_total', '#stat_total'],
+          ['', '', '', TEXT_RIGHT_ALIGN + TEXT_BOLD, '', '', '', '', '', TEXT_RIGHT_ALIGN + TEXT_BOLD, TEXT_RIGHT_ALIGN + TEXT_BOLD]);
+
+        windowGrid.setColumnIds('location_line_no,production_subplant,motif_id,motif_dimension,quality,motif_name,size,shading,pallet_status,pallet_count,total_quantity');
+        windowGrid.setColSorting("int,str,str,str,str,str,str,str,str,int,int");
+        windowGrid.setColTypes('ron,ro,ro,ro,ro,ro,ro,ro,palletStatus,ron,ron');
+        windowGrid.setInitWidths('50,60,40,60,80,*,80,60,50,80,80');
+        windowGrid.setNumberFormat("0,000", windowGrid.getColIndexById('pallet_count'), ",", ".");
+        windowGrid.setNumberFormat("0,000", windowGrid.getColIndexById('total_quantity'), ",", ".");
+        windowGrid.setColAlign('right,left,left,left,left,left,left,left,left,right,right');
+        windowGrid.setColumnHidden(windowGrid.getColIndexById('motif_id'), true); // no need to show the motif id
+
+        windowGrid.init();
+
+        windowGrid.attachEvent('onRowDblClicked', rowId => {
+          const rowVals = windowGrid.getRowData(rowId);
+          openPalletsByAreaDetailsWindow2(window2, warehouseId, areaId, areaName, rowVals.location_line_no, rowVals.production_subplant, rowVals.motif_id, rowVals.motif_name, rowVals.size, rowVals.shading);
+        });
+
+        fetchPalletsByAreaDetails(warehouseId, areaId);
+
+        function fetchPalletsByAreaDetails(warehouseId, areaId) {
+          windowCell.progressOn();
+          return WMSApi.location.fetchPalletsByAreaDetailsSummary(warehouseId, areaId)
+            .then(palletSummaries => ({
+              data: palletSummaries.map(summary => Object.assign(summary, {
+                id: `${summary.location_line_no}_${summary.production_subplant}_${summary.motif_id}_${summary.size}_${summary.shading}_${summary.pallet_status}`
+              }))
+            }))
+            .then(data => {
+              const now = moment();
+              windowGrid.clearAll();
+              windowGrid.parse(data, 'js');
+              windowToolbar.setItemText('timestamp', now.format());
+              windowGrid.filterByAll();
+
+              windowCell.progressOff();
+
+              return {
+                timestamp: now,
+                data: data.data.map(row => ({count: row.pallet_count, quantity: row.total_quantity}))
+              }
+            })
+            .then(({timestamp, data}) => {
+              // update the one in the main grid
+              const parentCell = rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_AREA_ID);
+              parentCell.getAttachedToolbar().setItemText('timestamp', timestamp.format());
+
+              const palletQuantitySum = data.map(val => val.quantity).reduce((accum, value) => accum + value);
+              const palletCountSum = data.map(val => val.count).reduce((accum, value) => accum + value);
+
+              const parentGrid = parentCell.getAttachedObject();
+              const rowId = `${warehouseId}_${areaId}`;
+              parentGrid.cells(rowId, parentGrid.getColIndexById('total_quantity')).setValue(palletQuantitySum);
+              parentGrid.cells(rowId, parentGrid.getColIndexById('pallet_count')).setValue(palletCountSum)
+            })
+            .catch(error => {
+              windowCell.progressOff();
+              handleApiError(error, windowCell);
+            })
+        }
+      }
+
+      function openPalletsByAreaDetailsWindow2(window2, warehouseId, areaId, areaName, rowId, subplant, motifId, motifName, size, shade) {
+        const windowCell = window2.createWindow('w1', 0, 0, 650, 450);
+        windowCell.setModal(true);
+        windowCell.button("park").hide();
+        windowCell.button("minmax1").hide();
+
+        const title = `${warehouseId} - ${areaName} - ${motifName}`;
+        windowCell.setText(title);
+
+        const windowToolbar = windowCell.attachToolbar({
+          iconset: 'awesome',
+          items: [
+            {type: 'button', id: 'refresh', text: 'Segarkan', img: 'fa fa-refresh'},
+            {type: 'separator'},
+            {type: 'button', id: 'clear_filters', text: 'Bersihkan Penyaring Data', img: 'fa fa-close'},
+            {type: 'separator'},
+            {type: 'button', id: 'print', text: 'Cetak', img: 'fa fa-print'},
+            {type: 'button', id: 'export_csv', text: 'Ke CSV', img: 'fa fa-file-excel-o'},
+            {type: 'button', id: 'export_pdf', text: 'Ke PDF', img: 'fa fa-file-pdf-o'},
+            {type: 'spacer'},
+            {type: 'text', id: 'timestamp', text: ''}
+          ]
+        });
+        windowToolbar.attachEvent('onClick', itemId => {
+          const filename = `${moment().format('YYYY-MM-DD')} - ${title}`;
+          switch (itemId) {
+            case 'refresh':
+              fetchListPalletsByAreaDetails(warehouseId, areaId, rowId, subplant, motifId, size, shade)
+                .then(() => {
+                  refreshPalletByAreaSummaryTimer.reset(DEFAULT_INTERVAL_LENGTH);
+                });
+              break;
+            case 'clear_filters':
+              gridUtils.clearAllGridFilters(windowGrid);
+              break;
+            case 'print':
+              gridUtils.generateFilteredPdf(windowGrid, title, USERID)
+                .getBlob(blob => {
+                  gridUtils.openPDFWindow(title, filename, blob, windowCell, windows)
+                }, {autoPrint: true});
+              break;
+            case 'export_csv':
+              gridUtils.downloadFilteredCSV(windowGrid, filename);
+              break;
+            case 'export_pdf':
+              gridUtils.generateFilteredPdf(windowGrid, title, USERID)
+                .download(filename);
+              break;
+          }
+        });
+
+        // setup grid
+        const windowGrid = windowCell.attachGrid();
+        windowGrid.setHeader(['NO.' ,'NO. PALLET', 'TGL. PROD.', 'SIZE', 'SHADING', 'QTY.'], null,
+          [TEXT_LEFT_ALIGN, TEXT_CENTER_ALIGN, TEXT_CENTER_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_RIGHT_ALIGN]);
+        windowGrid.attachHeader(['&nbsp;', HEADER_TEXT_FILTER, HEADER_TEXT_FILTER, HEADER_SELECT_FILTER, HEADER_TEXT_FILTER, HEADER_NUMERIC_FILTER]);
+        windowGrid.attachFooter(['','', '', '', 'Total', '#stat_total'],
+          ['','', '', '', TEXT_RIGHT_ALIGN + TEXT_BOLD, TEXT_RIGHT_ALIGN + TEXT_BOLD]);
+        windowGrid.setColumnIds('no,pallet_no,tanggal,size,shade,last_qty');
+        windowGrid.setColSorting("na,str,str,str,str,int");
+        windowGrid.setColTypes('cntr,ro,ro,ro,ro,ron');
+        windowGrid.setInitWidths('40,150,110,70,90,130');
+        windowGrid.setNumberFormat("0,000", windowGrid.getColIndexById('last_qty'), ",", ".");
+        windowGrid.setColAlign('right,center,center,left,left,right');
+        windowGrid.init();
+
+        fetchListPalletsByAreaDetails(warehouseId, areaId, rowId, subplant, motifId, size, shade);
+
+        function fetchListPalletsByAreaDetails(warehouseId, areaId, rowId, subplant, motifId, size, shade) {
+          windowCell.progressOn();
+          return WMSApi.location.fetchListPalletsByAreaDetails(warehouseId, areaId, rowId, subplant, motifId, size, shade)
+            .then(palletSummaries => ({
+              data: palletSummaries.map(summary => Object.assign(summary, {
+                id: `${summary.pallet_no}`
+              }))
+            }))
+            .then(data => {
+              const now = moment();
+              windowGrid.clearAll();
+              windowGrid.parse(data, 'js');
+              windowToolbar.setItemText('timestamp', now.format());
+              windowGrid.filterByAll();
+
+              windowCell.progressOff();
+            })
+            .catch(error => {
+              windowCell.progressOff();
+              handleApiError(error, windowCell);
+            })
+        }
+      }
+
+      function fetchPalletsByAreaSummary(selectedSubplant) {
+        rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_AREA_ID).progressOn();
+        return WMSApi.location.fetchPalletsByAreaSummary(selectedSubplant)
+          .then(palletSummaries => ({
+            data: palletSummaries.map(summary => Object.assign(summary, {
+              id: `${summary.location_warehouse_id}_${summary.location_area_id}`
+            }))
+          }))
+          .then(data => {
+            palletsByAreaGrid.clearAll();
+            palletsByAreaGrid.parse(data, 'js');
+            const hideWarehouseIdColumn = !AGGREGATE_MODES.includes(selectedSubplant);
+            palletsByAreaGrid.setColumnHidden(palletsByAreaGrid.getColIndexById('location_warehouse_id'), hideWarehouseIdColumn);
+
+            palletsByAreaCell.getAttachedToolbar().setItemText('timestamp', moment().format());
+            palletsByAreaGrid.filterByAll();
+
+            rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_AREA_ID).progressOff();
+          })
+          .catch(error => {
+            rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_AREA_ID).progressOff();
+            handleApiError(error, windows.getTopmostWindow(true));
+          })
+      }
+
+      let palletsByMotifToolbarItemCount, palletsByMotifSelectedSubplant;
+      let palletsByMotifGrid, palletsByMotifCell;
+
+      function setupPalletsByMotifCell(cell) {
+        palletsByMotifCell = cell;
+        const toolbarItems = [
+          {type: 'text', id: 'timestamp', text: ''},
+          {type: 'separator'},
+          {type: 'button', id: 'refresh', text: 'Segarkan', img: 'fa fa-refresh', imgdis: 'fa fa-refresh'},
+          {
+            type: 'buttonSelect',
+            id: 'marketing-pdf',
+            text: 'Lap. Marketing (PDF)',
+            img: 'fa fa-file-pdf-o',
+            imgdis: 'fa fa-file-pdf-o',
+            renderSelect: false,
+            options: [
+              {
+                type: 'button',
+                id: 'marketing-csv',
+                text: 'Lap. Marketing (CSV)',
+                img: 'fa fa-file-excel-o',
+                imgdis: 'fa fa-file-excel-o'
+              },
+            ]
+          },
+          {
+            type: 'button',
+            id: 'export-csv',
+            text: 'Ke CSV',
+            img: 'fa fa-file-excel-o',
+            imgdis: 'fa fa-file-excel-o'
+          },
+          {type: 'spacer'},
+          {type: 'text', id: 'text-subplant', text: 'Subplant'},
+          {type: 'separator'}
+        ];
+        palletsByMotifToolbarItemCount = toolbarItems.length;
+        const toolbar = cell.attachToolbar({
+          iconset: 'awesome',
+          items: toolbarItems
+        });
+
+        // setup grid skeleton first
+        const grid = cell.attachGrid();
+        grid.setHeader('SUBP.,MOTIF ID,QLTY,DIM.,MOTIF,TTL. PLT.,TTL. QTY,BLOCK QTY,AVAILABLE QTY', null,
+          [TEXT_RIGHT_ALIGN, '', '', TEXT_RIGHT_ALIGN, '', TEXT_RIGHT_ALIGN, TEXT_RIGHT_ALIGN, TEXT_RIGHT_ALIGN, TEXT_RIGHT_ALIGN]
+        );
+        grid.attachHeader([HEADER_SELECT_FILTER, HEADER_TEXT_FILTER, HEADER_SELECT_FILTER, HEADER_SELECT_FILTER, HEADER_TEXT_FILTER, HEADER_NUMERIC_FILTER, HEADER_NUMERIC_FILTER, HEADER_NUMERIC_FILTER, HEADER_NUMERIC_FILTER]);
+
+        grid.setColumnIds('production_subplant,motif_id,quality,motif_dimension,motif_name,pallet_count,total_quantity,block_qty,ava_qty');
+        grid.setColSorting("str,str,str,str,str,int,int,int,int");
+        grid.setColTypes("ro,ro,ro,ro,ro,ron,ron,ron,ron");
+        grid.setInitWidths("50,0,60,80,*,90,90,90,90");
+
+        grid.setColAlign("right,left,left,right,left,right,right,right,right");
+        grid.attachFooter(['', '', 'Grand Total', '#cspan', '#cspan', '#stat_total', '#stat_total', '#stat_total', '#stat_total'],
+          ['', '', TEXT_RIGHT_ALIGN + TEXT_BOLD, '', '', TEXT_RIGHT_ALIGN + TEXT_BOLD, TEXT_RIGHT_ALIGN + TEXT_BOLD, TEXT_RIGHT_ALIGN + TEXT_BOLD, TEXT_RIGHT_ALIGN + TEXT_BOLD]);
+        grid.setNumberFormat("0,000", grid.getColIndexById('pallet_count'), ",", ".");
+        grid.setNumberFormat("0,000", grid.getColIndexById('total_quantity'), ",", ".");
+        grid.setNumberFormat("0,000", grid.getColIndexById('block_qty'), ",", ".");
+        grid.setNumberFormat("0,000", grid.getColIndexById('ava_qty'), ",", ".");
+        grid.init();
+
+        grid.attachEvent('onRowDblClicked', rowId => {
+          const rowVals = grid.getRowData(rowId);
+          openStockDetailsByMotifWindow(windows, rowVals.motif_id, rowVals.motif_name, rowVals.production_subplant)
+        });
+        palletsByMotifGrid = grid;
+
+        // setup toolbar interaction with grid
+        toolbar.attachEvent('onClick', id => {
+          if (id === 'refresh') {
+            fetchStockSummaryByMotif(palletsByMotifSelectedSubplant)
+              .then(() => {
+                refreshPalletByMotifSummaryTimer.reset(DEFAULT_INTERVAL_LENGTH)
+              })
+          } else if (id === 'marketing-csv') {
+            generateMarketingReportCsv()
+          } else if (id === 'marketing-pdf') {
+            cell.progressOn();
+            generateMarketingReportPdf()
+              .then(doc => {
+                const title = palletsByMotifSelectedSubplant === 'all' || SUBPLANTS_LOCATION.length === 1 ?
+                  `Stok Keramik Plant ${SUBPLANTS_PRODUCTION[0][0]}` :
+                  `Stok Keramik Subplant ${palletsByMotifSelectedSubplant}`;
+                const pdfTitle = `${moment().format('YYYY-MM-DD')} - ${title}`;
+                pdfMake.createPdf(doc).getBlob(blob => {
+                  cell.progressOff();
+                  gridUtils.openPDFWindow(title, pdfTitle, blob, null, windows);
+                });
+              })
+          } else if (id === 'export-csv') {
+            const title = palletsByMotifSelectedSubplant === 'all' || SUBPLANTS_LOCATION.length === 1 ?
+              `Ringkasan Stok Keramik Plant ${SUBPLANTS_PRODUCTION[0][0]}.csv` :
+              `Ringkasan Stok Keramik Subplant ${palletsByMotifSelectedSubplant}.csv`;
+            cell.progressOn();
+            gridUtils.downloadFilteredCSV(grid, title);
+            cell.progressOff();
+          }
+        });
+        toolbar.attachEvent('onBeforeStateChange', id => {
+          return id !== palletsByMotifSelectedSubplant;
+        });
+        toolbar.attachEvent('onStateChange', (id, newState) => {
+          if (newState === true) {
+            palletsByMotifSelectedSubplant = id;
+            fetchStockSummaryByMotif(id)
+              .then(() => {
+                refreshPalletByMotifSummaryTimer.reset(DEFAULT_INTERVAL_LENGTH)
+              });
+            // disable report for all subplant.
+            toolbar.forEachItem(itemId => {
+              const itemType = toolbar.getType(itemId);
+              if (itemType === 'buttonTwoState' && itemId !== palletsByMotifSelectedSubplant) {
+                toolbar.setItemState(itemId, false);
+              }
+            })
+          }
+        })
+      }
+
+      function openStockDetailsByMotifWindow(windows, motifId, motifName, subplant) {
+        // open summary of pallet by area,
+        // create windowCell
+        const windowCell = windows.createWindow('w1', 0, 0, 750, 450);
+        windowCell.centerOnScreen();
+        windowCell.setModal(true);
+        windowCell.button("park").hide();
+        windowCell.button("minmax1").hide();
+
+        const title = `Motif ${motifName} - Subplant ${subplant}`;
+        windowCell.setText(title);
+
+        const windowToolbar = windowCell.attachToolbar({
+          iconset: 'awesome',
+          items: [
+            {type: 'button', id: 'refresh', text: 'Segarkan', img: 'fa fa-refresh'},
+            {type: 'separator'},
+            {type: 'button', id: 'clear_filters', text: 'Bersihkan Penyaring Data', img: 'fa fa-close'},
+            {type: 'separator'},
+            {type: 'button', id: 'print', text: 'Cetak', img: 'fa fa-print'},
+            {type: 'button', id: 'export_csv', text: 'Ke CSV', img: 'fa fa-file-excel-o'},
+            {type: 'button', id: 'export_pdf', text: 'Ke PDF', img: 'fa fa-file-pdf-o'},
+            {type: 'spacer'},
+            {type: 'text', id: 'timestamp', text: ''}
+          ]
+        });
+        windowToolbar.attachEvent('onClick', itemId => {
+          const filename = `${moment().format('YYYY-MM-DD')} - ${title}`;
+          switch (itemId) {
+            case 'refresh':
+              fetchPalletSummary(subplant, motifId)
+                .then(() => {
+                  refreshPalletByMotifSummaryTimer.reset(DEFAULT_INTERVAL_LENGTH);
+                });
+              break;
+            case 'clear_filters':
+              gridUtils.clearAllGridFilters(windowGrid);
+              break;
+            case 'print':
+              gridUtils.generateFilteredPdf(windowGrid, title, USERID)
+                .getBlob(blob => {
+                  gridUtils.openPDFWindow(title, filename, blob, windowCell, windows)
+                }, {autoPrint: true});
+              break;
+            case 'export_csv':
+              gridUtils.downloadFilteredCSV(windowGrid, filename);
+              break;
+            case 'export_pdf':
+              gridUtils.generateFilteredPdf(windowGrid, title, USERID)
+                .download(filename);
+              break;
+          }
+        });
+
+        // setup grid
+        const windowGrid = windowCell.attachGrid();
+        windowGrid.setHeader(['KD. GDG.', 'KD. AREA', 'AREA', 'BRS.', 'SZ.', 'SHADE.', 'STS.', 'TTL. PLT.', 'TTL. QTY.', 'BLOCK QTY.', 'AVA. QTY.'], null,
+          [TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_RIGHT_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_LEFT_ALIGN, TEXT_RIGHT_ALIGN, TEXT_RIGHT_ALIGN, TEXT_RIGHT_ALIGN, TEXT_RIGHT_ALIGN]);
+        windowGrid.attachHeader([HEADER_SELECT_FILTER, HEADER_TEXT_FILTER, HEADER_TEXT_FILTER, HEADER_NUMERIC_FILTER, HEADER_SELECT_FILTER, HEADER_SELECT_FILTER, HEADER_SELECT_FILTER, HEADER_NUMERIC_FILTER, HEADER_NUMERIC_FILTER, HEADER_NUMERIC_FILTER, HEADER_NUMERIC_FILTER]);
+        windowGrid.setInitWidths('50,50,*,50,50,50,60,70,70,0,0');
+        windowGrid.setColAlign('left,left,left,right,left,left,left,right,right,right,right');
+        windowGrid.setColumnIds('location_warehouse_id,location_area_id,location_area_name,location_line_no,size,shading,pallet_status,pallet_count,total_quantity,block_qty,ava_qty');
+        windowGrid.setColTypes('ro,ro,ro,ron,ro,ro,palletStatus,ron,ron,ron,ron');
+        windowGrid.setNumberFormat("0,000", windowGrid.getColIndexById('pallet_count'), ",", ".");
+        windowGrid.setNumberFormat("0,000", windowGrid.getColIndexById('total_quantity'), ",", ".");
+        windowGrid.setNumberFormat("0,000", windowGrid.getColIndexById('block_qty'), ",", ".");
+        windowGrid.setNumberFormat("0,000", windowGrid.getColIndexById('ava_qty'), ",", ".");
+        windowGrid.setColSorting('str,str,str,int,str,str,str,int,int,int,int');
+        windowGrid.attachFooter(['Total', '#cspan', '#cspan', '#cspan', '#cspan', '#cspan', '#cspan', '#stat_total', '#stat_total', '#stat_total', '#stat_total'],
+          [TEXT_RIGHT_ALIGN + TEXT_BOLD, '', '', '', '', '', '', TEXT_RIGHT_ALIGN + TEXT_BOLD, TEXT_RIGHT_ALIGN + TEXT_BOLD, TEXT_RIGHT_ALIGN + TEXT_BOLD, TEXT_RIGHT_ALIGN + TEXT_BOLD]);
+        windowGrid.init();
+
+        windowGrid.attachEvent('onRowDblClicked', rowId => {
+          const rowVals = windowGrid.getRowData(rowId);
+          openPalletsByAreaDetailsWindow2(window2, rowVals.location_warehouse_id, rowVals.location_area_id, rowVals.location_area_name, rowVals.location_line_no, subplant, motifId, motifName, rowVals.size, rowVals.shading);
+        });
+
+        fetchPalletSummary(subplant, motifId);
+
+        function fetchPalletSummary(subplant, motifId) {
+          windowCell.progressOn();
+          return WMSApi.stock.fetchStockDetailsByMotif(subplant, [motifId])
+            .then(palletSummaries => ({
+              data: palletSummaries.map(summary => Object.assign(summary, {
+                id: `${summary.production_subplant}_${summary.location_warehouse_id}_${summary.location_area_id}_${summary.location_line_no}_${summary.size}_${summary.shading}_${summary.pallet_status}`
+              }))
+            }))
+            .then(data => {
+              const now = moment();
+              windowGrid.clearAll();
+              windowGrid.parse(data, 'js');
+              windowToolbar.setItemText('timestamp', now.format());
+              windowGrid.filterByAll();
+              windowCell.progressOff();
+
+              return {
+                timestamp: now,
+                data: data.data.map(row => ({count: row.pallet_count, quantity: row.total_quantity}))
+              }
+            })
+            .then(({timestamp, data}) => {
+              // update the one in the main grid
+              const parentCell = rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID);
+              parentCell.getAttachedToolbar().setItemText('timestamp', timestamp.format());
+
+              const palletQuantitySum = data.map(val => val.quantity).reduce((accum, value) => accum + value);
+              const palletCountSum = data.map(val => val.count).reduce((accum, value) => accum + value);
+
+              const parentGrid = parentCell.getAttachedObject();
+              const rowId = `${subplant}_${motifId}`;
+              parentGrid.cells(rowId, parentGrid.getColIndexById('pallet_count')).setValue(palletCountSum);
+              parentGrid.cells(rowId, parentGrid.getColIndexById('total_quantity')).setValue(palletQuantitySum);
+            })
+            .catch(error => {
+              windowCell.progressOff();
+              handleApiError(error, windowCell);
+            })
+        }
+      }
+
+      function fetchStockSummaryByMotif(selectedSubplant) {
+        const layout = rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID);
+        layout.progressOn();
+
+        return WMSApi.stock.fetchStockSummaryByMotif(selectedSubplant)
+          .then(palletSummaries => ({
+            data: palletSummaries.map(summary => Object.assign(summary, {
+              id: `${summary.production_subplant}_${summary.motif_id}`
+            }))
+          }))
+          .then(data => {
+            let hideSubplantColumn = AGGREGATE_MODES.findIndex(subplant => subplant === selectedSubplant) === -1;
+            if (hideSubplantColumn) {
+              // count the number of subplants in the dataset
+              const subplantCount = new Set(data.data.map(summary => summary.production_subplant)).size;
+              hideSubplantColumn = subplantCount === 1;
+            }
+
+            palletsByMotifGrid.setColumnHidden(palletsByMotifGrid.getColIndexById('production_subplant'), hideSubplantColumn); // no need to show the subplant
+            palletsByMotifGrid.clearAll();
+            palletsByMotifGrid.parse(data, 'js');
+            palletsByMotifCell.getAttachedToolbar().setItemText('timestamp', moment().format());
+
+            palletsByMotifGrid.filterByAll();
+            rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID).progressOff();
+          })
+          .catch(error => {
+            rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID).progressOff();
+            handleApiError(error, windows.getTopmostWindow(true));
+          })
+      }
+
+      function generateMarketingReportCsv() {
+        const motifIds = [];
+        const productionSubplants = new Map();
+        const visibleRowCount = palletsByMotifGrid.getRowsNum();
+        const motifIdColIndex = palletsByMotifGrid.getColIndexById('motif_id');
+        const productionSubplantIndex = palletsByMotifGrid.getColIndexById('production_subplant');
+        for (let i = 0; i < visibleRowCount; i++) {
+          const rowId = palletsByMotifGrid.getRowId(i);
+          const motifId = palletsByMotifGrid.cells(rowId, motifIdColIndex).getValue();
+          motifIds.push(motifId);
+
+          const productionSubplant = palletsByMotifGrid.cells(rowId, productionSubplantIndex).getValue();
+          productionSubplants.set(productionSubplant, true);
+        }
+
+        rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID).progressOn();
+        return WMSApi.stock.fetchStockDetailsByMotif(Array.from(productionSubplants.keys()), motifIds)
+          .then(summaries => summaries
+            .filter(summary => summary.pallet_status === 'R')
+            .map(summary => ({
+              subplant: summary.production_subplant,
+              location_id: `${summary.location_warehouse_id}-${summary.location_area_id}-${summary.location_line_no}`,
+              motif_id: summary.motif_id,
+              motif_dimension: summary.motif_dimension,
+              motif_name: summary.motif_name,
+              size: summary.size,
+              shading: summary.shading,
+              pallet_count: summary.pallet_count,
+              pallet_quantity_sum: summary.total_quantity
+            })))
+          .then(summaries => {
+            const now = moment().format('D MMM YYYY');
+            const title = palletsByMotifSelectedSubplant === 'all' ? `Stok Keramik Plant ${SUBPLANTS_PRODUCTION[0][0]}` :
+              palletsByMotifSelectedSubplant === 'other' ? `Stok Keramik Plant ${SUBPLANTS_PRODUCTION[0][0]} - Plant Lain` :
+                `Stok Keramik Subplant ${palletsByMotifSelectedSubplant}`;
+            const filename = `${now} - ${title}.csv`;
+
+            const tableHeaders = ['SUBPLANT', 'LOKASI', 'DIMENSI', 'MOTIF', 'SIZE', 'SHADING', 'TTL. PLT.', 'TTL. QTY.'];
+            const tableRows = summaries.reduce((result, summary) => {
+              result.push([
+                summary.subplant,
+                summary.location_id,
+                summary.motif_dimension,
+                summary.motif_name,
+                summary.size,
+                summary.shading,
+                summary.pallet_count,
+                summary.pallet_quantity_sum
+              ]);
+              return result
+            }, []);
+            gridUtils.downloadCSV(filename, tableRows, tableHeaders);
+
+            rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID).progressOff();
+          })
+          .catch(error => {
+            rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID).progressOff();
+            console.error(error);
+            dhtmlx.alert({
+              title: 'Error Generating PDF',
+              text: error
+            })
+          })
+      }
+
+      function generateMarketingReportPdf() {
+        const timestamp = new Date();
+        const generatedAt = `Dibuat oleh [${USERID}] pada ${timestamp.toLocaleString(gridUtils.DEFAULT_LOCALE, gridUtils.DEFAULT_LOCALE_DATETIME_OPTIONS)}`;
+
+        const motifIds = [];
+        const productionSubplants = new Map();
+        const visibleRowCount = palletsByMotifGrid.getRowsNum();
+        const motifIdColIndex = palletsByMotifGrid.getColIndexById('motif_id');
+        const productionSubplantIndex = palletsByMotifGrid.getColIndexById('production_subplant');
+        for (let i = 0; i < visibleRowCount; i++) {
+          const rowId = palletsByMotifGrid.getRowId(i);
+          const motifId = palletsByMotifGrid.cells(rowId, motifIdColIndex).getValue();
+          motifIds.push(motifId);
+
+          const productionSubplant = palletsByMotifGrid.cells(rowId, productionSubplantIndex).getValue();
+          productionSubplants.set(productionSubplant, true);
+        }
+        rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID).progressOn();
+        return WMSApi.stock.fetchStockDetailsByMotif(Array.from(productionSubplants.keys()), motifIds)
+          .then(summaries => summaries.filter(summary => summary.pallet_status === 'R').map(summary => ({
+            subplant: summary.production_subplant,
+            location_id: `${summary.location_warehouse_id}-${summary.location_area_id}-${summary.location_line_no}`,
+            motif_id: summary.motif_id,
+            motif_dimension: summary.motif_dimension,
+            motif_name: summary.motif_name,
+            size: summary.size,
+            shading: summary.shading,
+            pallet_count: summary.pallet_count,
+            pallet_quantity_sum: summary.total_quantity
+          })))
+          .then(summaries => {
+            // group by subplant and motif
+            const subplantMotifIndex = {};
+            const subplantMotifCount = {};
+            const summariesBySubplantAndMotif = summaries.reduce((result, item) => {
+              const subplant = result[item.subplant] = result[item.subplant] || [];
+              const motifInArrayIndex = !subplantMotifIndex.hasOwnProperty(item.subplant)
+                ? -1 : !subplantMotifIndex[item.subplant].hasOwnProperty(item.motif_id)
+                  ? -1 : subplantMotifIndex[item.subplant][item.motif_id];
+
+              if (motifInArrayIndex === -1) {
+                subplant.push({
+                  motif_id: item.motif_id,
+                  motif_dimension: item.motif_dimension,
+                  motif_name: item.motif_name,
+                  data: [{
+                    location_id: item.location_id,
+                    size: item.size,
+                    shading: item.shading,
+                    pallet_count: item.pallet_count,
+                    pallet_quantity_sum: item.pallet_quantity_sum
+                  }]
+                });
+                // keep the motifCount and motifIndex
+                if (!subplantMotifIndex.hasOwnProperty(item.subplant)) {
+                  subplantMotifIndex[item.subplant] = {};
+                }
+                if (!subplantMotifCount.hasOwnProperty(item.subplant)) {
+                  subplantMotifCount[item.subplant] = 0;
+                }
+                subplantMotifIndex[item.subplant][item.motif_id] = subplantMotifCount[item.subplant]++;
+              } else {
+                subplant[motifInArrayIndex].data.push({
+                  location_id: item.location_id,
+                  size: item.size,
+                  shading: item.shading,
+                  pallet_count: item.pallet_count,
+                  pallet_quantity_sum: item.pallet_quantity_sum
+                })
+              }
+
+              return result;
+            }, {});
+
+            const multiSubplant = AGGREGATE_MODES.indexOf(palletsByMotifSelectedSubplant) !== -1 ||
+              ['4A', '5A'].includes(palletsByMotifSelectedSubplant);
+            const title = palletsByMotifSelectedSubplant === 'all' ? `Stok Keramik Plant ${SUBPLANTS_PRODUCTION[0][0]}` :
+              palletsByMotifSelectedSubplant === 'other' ? `Stok Keramik Plant ${SUBPLANTS_PRODUCTION[0][0]} - Plant Lain` :
+                palletsByMotifSelectedSubplant === 'local' ? `Stok Keramik Plant ${SUBPLANTS_PRODUCTION[0][0]} - Lokal` :
+                  `Stok Keramik Subplant ${palletsByMotifSelectedSubplant}`;
+            const columnWidths = ['*', '*', '*', '*', '*'];
+            const docDefinition = {
+              // page setup
+              pageOrientation: 'portrait',
+              pageSize: 'A4',
+              pageMargins: [40, 60],
+
+              header: {text: title, style: 'header', margin: [40, 20, 30, 40], alignment: 'center'},
+              footer: (currentPage, pageCount) => ({
+                columns: [
+                  generatedAt,
+                  // TODO i18n
+                  {text: `Halaman ${currentPage} dari ${pageCount}`, alignment: 'right'}
+                ],
+                margin: [40, 20, 30, 40],
+                fontSize: 10
+              }),
+
+              content: [],
+
+              styles: {
+                header: {
+                  fontSize: 18,
+                  bold: true,
+                  margin: [0, 0, 0, 10]
+                },
+                subheader: {
+                  fontSize: 12,
+                  bold: true,
+                  margin: [0, 0, 0, 10]
+                },
+                table: {
+                  margin: [0, 5, 0, 15]
+                },
+                tableHeader: {
+                  bold: true,
+                  fontSize: 12,
+                  color: 'black'
+                }
+              },
+            };
+
+            const subplants = Object.keys(summariesBySubplantAndMotif);
+            subplants.forEach((subplant, index) => {
+              const subplantContent = [];
+              if (multiSubplant) {
+                subplantContent.push({
+                  text: `Subplant ${subplant}`, style: 'header'
+                })
+              }
+
+              const tableBody = [];
+              const tableDefinition = {
+                table: {
+                  headerRows: 1,
+                  keepWithHeaderRows: 1,
+                  style: 'table',
+                  widths: columnWidths,
+                  body: tableBody
+                }
+              };
+              const tableHeader = [
+                {text: 'SIZE', style: 'tableHeader'},
+                {text: 'SHADING', style: 'tableHeader'},
+                {text: 'LOKASI', style: 'tableHeader'},
+                {text: 'TTL. PLT.', style: 'tableHeader', alignment: 'right'},
+                {text: 'TTL. QTY.', style: 'tableHeader', alignment: 'right'}
+              ];
+
+              // generate header first
+              tableBody.push(tableHeader);
+
+              summariesBySubplantAndMotif[subplant].forEach(motif => {
+                tableBody.push([{text: motif.motif_name, style: 'subheader', colSpan: tableHeader.length}]);
+                motif.data.forEach(sizeShading => {
+                  tableBody.push([
+                    {text: sizeShading.size},
+                    {text: sizeShading.shading},
+                    {text: sizeShading.location_id},
+                    {text: sizeShading.pallet_count.toLocaleString(gridUtils.DEFAULT_LOCALE), alignment: 'right'},
+                    {text: sizeShading.pallet_quantity_sum.toLocaleString(gridUtils.DEFAULT_LOCALE), alignment: 'right'}
+                  ])
+                });
+              });
+
+              // add subplant to document
+              subplantContent.push(tableDefinition);
+              subplantContent.push('\n\n');
+              if (index !== subplants.length - 1) {
+                subplantContent.push({text: '', pageBreak: 'before'});
+              }
+              docDefinition.content = docDefinition.content.concat(subplantContent)
+            });
+            rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID).progressOff();
+            return docDefinition;
+          })
+          .catch(error => {
+            rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID).progressOff();
+            console.error(error);
+            dhtmlx.alert({
+              title: 'Error Generating PDF',
+              text: error
+            })
+          });
+      }
+
+      // init everything
+      let rootLayout;
+      let windows;
+      let window2;
+
+      function doOnLoad() {
+        const mainLayout = new dhtmlXLayoutObject({
+          parent: document.body,
+          pattern:    "1C",
+          cells: [
+            {id: "a", header: false}
+          ]
+        });
+
+        const tabbar = mainLayout.cells("a").attachTabbar({
+          tabs: [
+            { id: "t1", text: "Stok", active: true },
+            { id: "t2", text: "Pemuatan"},
+            { id: "t3", text: "Hasil Produksi"},
+            { id: "t4", text: "Sales Vs Hasil Produksi"},
+            { id: "t5", text: "Barang Pecah"},
+            { id: "t6", text: "FOC"},
+            { id: "t7", text: "Aging >120 Hari"}
+          ]
+        });
+
+        rootLayout = tabbar.tabs("t1").attachLayout({
+          pattern: '2U',
+          cells: [
+            {id: ROOT_LAYOUT_PALLETS_BY_AREA_ID, header: true, text: 'Ringkasan Palet per Area'},
+            {id: ROOT_LAYOUT_PALLETS_BY_MOTIF_ID, header: true, text: 'Ringkasan Palet per Motif'}
+          ]
+        });
+
+        var myLayout = tabbar.tabs("t2").attachLayout({
+          pattern: "2E",
+          cells: [
+            {id: "a", header: false, height:50},
+            {id: "b", header: false}
+          ]
+        });
+
+        const formSearch = [
+          {type: "settings", position: "label-left",labelWidth: 50,inputWidth: 160},
+          {
+            type: 'combo',
+            name: 'jns',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            options: [
+                {text: "Harian", value: "H"},
+                {text: "Mingguan", value: "M"},
+                {text: "Bulanan", value: "B"},
+                {text: "Shift", value: "S"},
+                {text: "Periode", value: "P"}
+              ]
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'combo',
+            name: 'tpe',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            hidden: true,
+            options: [
+                {text: "Per-Shift", value: "shift"},
+                {text: "Total", value: "all"}
+              ]
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'calendar',
+            offsetLeft: 20,
+            name: 'tgl',
+            label: '',
+            enableTodayButton: true,
+            required: true,
+            readonly: true,
+            dateFormat: "%Y-%m-%d",
+            calendarPosition: "right",
+            inputWidth: 100,
+            value: moment().format('YYYY-MM-DD')
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'calendar',
+            offsetLeft: 20,
+            name: 'tglb',
+            label: '',
+            enableTodayButton: true,
+            required: true,
+            readonly: true,
+            dateFormat: "%Y-%m-%d",
+            calendarPosition: "right",
+            inputWidth: 100,
+            hidden: true,
+            value: moment().format('YYYY-MM-DD')
+          },
+          {type: 'newcolumn'},
+          {
+            type: 'combo',
+            name: 'thn',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            hidden: true,
+            options: [
+                {text: "2018", value: "2018"},
+                {text: "2019", value: "2019"},
+                {text: "2020", value: "2020"},
+                {text: "2021", value: "2021"},
+                {text: "2022", value: "2022"},
+                {text: "2023", value: "2023"},
+                {text: "2024", value: "2024"},
+                {text: "2025", value: "2025"}
+              ]
+          },
+          {type: 'newcolumn'},
+          {
+            type: 'combo',
+            name: 'muat',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            hidden: false,
+            options: [
+                {text: "Marketing", value: "BAM"},
+                {text: "Lokal", value: "BAL"},
+                {text: "Semua", value: "all"},
+              ]
+          },
+          {type: 'newcolumn' },
+          {type: "button",offsetLeft:30, name: "search",value: "Get Data"},
+        ];
+
+        var myFormSearch = myLayout.cells("a").attachForm(formSearch);
+
+        myFormSearch.setItemValue('thn', moment().format('YYYY'));
+
+        myFormSearch.attachEvent("onChange", function (name, value, state){
+          if(name == 'jns') {
+            if(value == 'H' || value == 'S') {
+              myFormSearch.hideItem('tpe');
+              myFormSearch.hideItem('thn');
+              myFormSearch.showItem('tgl');
+              myFormSearch.hideItem('tglb');
+            } else if(value == 'M') {
+              myFormSearch.showItem('tpe');
+              myFormSearch.hideItem('thn');
+              myFormSearch.hideItem('tgl');
+              myFormSearch.hideItem('tglb');  
+            } else if(value == 'B') {
+              myFormSearch.showItem('tpe');
+              myFormSearch.showItem('thn');
+              myFormSearch.hideItem('tgl');
+              myFormSearch.hideItem('tglb');
+            } else if(value == 'P') {
+              myFormSearch.showItem('tpe');
+              myFormSearch.hideItem('thn');
+              myFormSearch.showItem('tgl');
+              myFormSearch.showItem('tglb');
+            }
+          }
+        });
+
+        myFormSearch.attachEvent('onButtonClick', id => {
+          if (id === 'search') {
+            var jns = myFormSearch.getItemValue('jns');
+            var tpe = myFormSearch.getItemValue('tpe');
+            var tgl = myFormSearch.getItemValue('tgl', true);
+            var tglb = myFormSearch.getItemValue('tglb', true);
+            var thn = myFormSearch.getItemValue('thn');
+            var muat = myFormSearch.getItemValue('muat');
+            myLayout.cells("b").attachURL("grafik.php?jns="+jns+"&tpe="+tpe+"&tgl="+tgl+"&tglb="+tglb+"&thn="+thn+"&muat="+muat, false, true);
+          }
+        });
+
+        var jns = myFormSearch.getItemValue('jns');
+        var tpe = myFormSearch.getItemValue('tpe');
+        var tgl = myFormSearch.getItemValue('tgl', true);
+        var tglb = myFormSearch.getItemValue('tglb', true);
+        var thn = myFormSearch.getItemValue('thn');
+        var muat = myFormSearch.getItemValue('muat');
+        myLayout.cells("b").attachURL("grafik.php?jns="+jns+"&tpe="+tpe+"&tgl="+tgl+"&tglb="+tglb+"&thn="+thn+"&muat="+muat, false, true);
+
+        var my2Layout = tabbar.tabs("t3").attachLayout({
+          pattern: "2E",
+          cells: [
+            {id: "a", header: false, height:50},
+            {id: "b", header: false}
+          ]
+        });
+
+        const form2Search = [
+          {type: "settings", position: "label-left",labelWidth: 50,inputWidth: 160},
+          {
+            type: 'combo',
+            name: 'jns',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            options: [
+                {text: "Harian", value: "H"},
+                {text: "Mingguan", value: "M"},
+                {text: "Bulanan", value: "B"},
+                {text: "Shift", value: "S"},
+                {text: "Periode", value: "P"}
+              ]
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'combo',
+            name: 'sub',
+            label: 'Subplant',
+            labelWidth: 75,
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            options: [
+                {text: "ALL", value: "ALL"},
+                {text: "5A", value: "5A"},
+                {text: "5B", value: "5B"}
+              ]
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'combo',
+            name: 'line',
+            label: 'Line',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            options: [
+                {text: "ALL", value: "ALL"},
+                {text: "1", value: "1"},
+                {text: "2", value: "2"},
+                {text: "3", value: "3"}
+              ]
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'combo',
+            name: 'tpe',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            hidden: true,
+            options: [
+                {text: "Per-Shift", value: "shift"},
+                {text: "Total", value: "all"}
+              ]
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'calendar',
+            offsetLeft: 20,
+            name: 'tgl',
+            label: '',
+            enableTodayButton: true,
+            required: true,
+            readonly: true,
+            dateFormat: "%Y-%m-%d",
+            calendarPosition: "right",
+            inputWidth: 100,
+            value: moment().format('YYYY-MM-DD')
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'calendar',
+            offsetLeft: 20,
+            name: 'tglb',
+            label: 's/d',
+            enableTodayButton: true,
+            required: true,
+            readonly: true,
+            dateFormat: "%Y-%m-%d",
+            calendarPosition: "right",
+            inputWidth: 100,
+            hidden: true,
+            value: moment().format('YYYY-MM-DD')
+          },
+          {type: 'newcolumn'},
+          {
+            type: 'combo',
+            name: 'thn',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            hidden: true,
+            options: [
+                {text: "2018", value: "2018"},
+                {text: "2019", value: "2019"},
+                {text: "2020", value: "2020"},
+                {text: "2021", value: "2021"},
+                {text: "2022", value: "2022"},
+                {text: "2023", value: "2023"},
+                {text: "2024", value: "2024"},
+                {text: "2025", value: "2025"}
+              ]
+          },
+          {type: 'newcolumn' },
+          {type: "button",offsetLeft:30, name: "search",value: "Get Data"},
+        ];
+
+        var my2FormSearch = my2Layout.cells("a").attachForm(form2Search);
+
+        my2FormSearch.setItemValue('thn', moment().format('YYYY'));
+
+        my2FormSearch.attachEvent("onChange", function (name, value, state){
+          if(name == 'jns') {
+            if(value == 'H' || value == 'S') {
+              my2FormSearch.hideItem('tpe');
+              my2FormSearch.hideItem('thn');
+              my2FormSearch.showItem('tgl');
+              my2FormSearch.hideItem('tglb');
+            } else if(value == 'M') {
+              my2FormSearch.hideItem('tpe');
+              my2FormSearch.hideItem('thn');
+              my2FormSearch.hideItem('tgl');
+              my2FormSearch.hideItem('tglb');
+            } else if(value == 'B') {
+              my2FormSearch.hideItem('tpe');
+              my2FormSearch.showItem('thn');
+              my2FormSearch.hideItem('tgl');
+              my2FormSearch.hideItem('tglb');
+            } else if(value == 'P') {
+              my2FormSearch.hideItem('tpe');
+              my2FormSearch.hideItem('thn');
+              my2FormSearch.showItem('tgl');
+              my2FormSearch.showItem('tglb');
+            }
+          }
+        });
+
+        my2FormSearch.attachEvent('onButtonClick', id => {
+          if (id === 'search') {
+            var jns = my2FormSearch.getItemValue('jns');
+            var tpe = my2FormSearch.getItemValue('tpe');
+            var tgl = my2FormSearch.getItemValue('tgl', true);
+            var tglb = my2FormSearch.getItemValue('tglb', true);
+            var thn = my2FormSearch.getItemValue('thn');
+            var sub = my2FormSearch.getItemValue('sub');
+            var line = my2FormSearch.getItemValue('line');
+            my2Layout.cells("b").attachURL("grafik_produksi.php?jns="+jns+"&tpe="+tpe+"&tgl="+tgl+"&tglb="+tglb+"&thn="+thn+"&sub="+sub+"&line="+line, false, true);        
+          }
+        });
+
+        var jns = my2FormSearch.getItemValue('jns');
+        var tpe = my2FormSearch.getItemValue('tpe');
+        var tgl = my2FormSearch.getItemValue('tgl', true);
+        var tglb = my2FormSearch.getItemValue('tglb', true);
+        var thn = my2FormSearch.getItemValue('thn');
+        var sub = my2FormSearch.getItemValue('sub');
+        var line = my2FormSearch.getItemValue('line');
+        my2Layout.cells("b").attachURL("grafik_produksi.php?jns="+jns+"&tpe="+tpe+"&tgl="+tgl+"&tglb="+tglb+"&thn="+thn+"&sub="+sub+"&line="+line, false, true);
+
+        var my3Layout = tabbar.tabs("t4").attachLayout({
+          pattern: "2E",
+          cells: [
+            {id: "a", header: false, height:50},
+            {id: "b", header: false}
+          ]
+        });
+
+        const form3Search = [
+          {type: "settings", position: "label-left",labelWidth: 50,inputWidth: 160},
+          {
+            type: 'combo',
+            name: 'jns',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            options: [
+                {text: "Perhari", value: "H"},
+                {text: "Perbulan", value: "B"},
+                {text: "Periode", value: "M"}
+              ]
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'combo',
+            name: 'sub',
+            label: 'Subplant',
+            labelWidth: 75,
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            options: [
+                {text: "ALL", value: "ALL"},
+                {text: "5A", value: "5A"},
+                {text: "5B", value: "5B"}
+              ]
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'calendar',
+            offsetLeft: 20,
+            name: 'tgl',
+            label: '',
+            enableTodayButton: true,
+            required: true,
+            readonly: true,
+            dateFormat: "%Y-%m-%d",
+            calendarPosition: "right",
+            inputWidth: 100,
+            value: moment().format('YYYY-MM-DD')
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'calendar',
+            offsetLeft: 20,
+            name: 'tglb',
+            label: '',
+            enableTodayButton: true,
+            required: true,
+            readonly: true,
+            dateFormat: "%Y-%m-%d",
+            calendarPosition: "right",
+            inputWidth: 100,
+            hidden: true,
+            value: moment().format('YYYY-MM-DD')
+          },
+          {type: 'newcolumn'},
+          {
+            type: 'combo',
+            name: 'bln',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            hidden: true,
+            options: [
+                {value: "1", text: "Januari"},
+                {value: "2", text: "Februari"},
+                {value: "3", text: "Maret"},
+                {value: "4", text: "April"},
+                {value: "5", text: "Mei"},
+                {value: "6", text: "Juni"},
+                {value: "7", text: "Juli"},
+                {value: "8", text: "Agustus"},
+                {value: "9", text: "September"},
+                {value: "10", text: "Oktober"},
+                {value: "11", text: "November"},
+                {value: "12", text: "Desember"}
+              ]
+          },
+          {type: 'newcolumn'},
+          {
+            type: 'combo',
+            name: 'thn',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            hidden: true,
+            options: [
+                {text: "2018", value: "2018"},
+                {text: "2019", value: "2019"},
+                {text: "2020", value: "2020"},
+                {text: "2021", value: "2021"},
+                {text: "2022", value: "2022"},
+                {text: "2023", value: "2023"},
+                {text: "2024", value: "2024"},
+                {text: "2025", value: "2025"}
+              ]
+          },
+          {type: 'newcolumn' },
+          {type: "button",offsetLeft:30, name: "search",value: "Get Data"},
+        ];
+
+        var my3FormSearch = my3Layout.cells("a").attachForm(form3Search);
+
+        my3FormSearch.setItemValue('bln', moment().format('M'));
+        my3FormSearch.setItemValue('thn', moment().format('YYYY'));
+
+        my3FormSearch.attachEvent("onChange", function (name, value, state){
+          if(name == 'jns') {
+            if(value == 'H') {
+              my3FormSearch.showItem('tgl');
+              my3FormSearch.hideItem('tglb');
+              my3FormSearch.hideItem('bln');
+              my3FormSearch.hideItem('thn');
+            } else if(value == 'M') {
+              my3FormSearch.showItem('tgl');
+              my3FormSearch.showItem('tglb');
+              my3FormSearch.hideItem('bln');
+              my3FormSearch.hideItem('thn');
+            } else if(value == 'B') {
+              my3FormSearch.hideItem('tgl');
+              my3FormSearch.hideItem('tglb');
+              my3FormSearch.showItem('bln');
+              my3FormSearch.showItem('thn');
+            }
+          }
+        });
+
+        my3FormSearch.attachEvent('onButtonClick', id => {
+          if (id === 'search') {
+            var jns = my3FormSearch.getItemValue('jns');
+            var tgl = my3FormSearch.getItemValue('tgl', true);
+            var tglb = my3FormSearch.getItemValue('tglb', true);
+            var bln = my3FormSearch.getItemValue('bln');
+            var thn = my3FormSearch.getItemValue('thn');
+            var sub = my3FormSearch.getItemValue('sub');
+            my3Layout.cells("b").attachURL("grafik_salesvsprod.php?jns="+jns+"&tgl="+tgl+"&tglb="+tglb+"&bln="+bln+"&thn="+thn+"&sub="+sub, false, true);        
+          }
+        });
+
+        var jns = my3FormSearch.getItemValue('jns');
+        var tgl = my3FormSearch.getItemValue('tgl', true);
+        var tglb = my3FormSearch.getItemValue('tglb', true);
+        var bln = my3FormSearch.getItemValue('bln');
+        var thn = my3FormSearch.getItemValue('thn');
+        var sub = my3FormSearch.getItemValue('sub');
+        my3Layout.cells("b").attachURL("grafik_salesvsprod.php?jns="+jns+"&tgl="+tgl+"&tglb="+tglb+"&bln="+bln+"&thn="+thn+"&sub="+sub, false, true);
+
+        var my4Layout = tabbar.tabs("t5").attachLayout({
+          pattern: "2E",
+          cells: [
+            {id: "a", header: false, height:50},
+            {id: "b", header: false}
+          ]
+        });
+
+        const form4Search = [
+          {type: "settings", position: "label-left",labelWidth: 50,inputWidth: 160},
+          {
+            type: 'combo',
+            name: 'jns',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            options: [
+                {text: "Harian", value: "H"},
+                {text: "Bulanan", value: "B"},
+                {text: "Tahunan", value: "T"}
+              ]
+          },
+          {type: 'newcolumn'},
+          {
+            type: 'combo',
+            name: 'sub',
+            label: 'Subplant',
+            labelWidth: 75,
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            options: [
+                {text: "ALL", value: "ALL"},
+                {text: "5A", value: "5A"},
+                {text: "5B", value: "5B"}
+              ]
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'combo',
+            name: 'bln',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            hidden: false,
+            options: [
+                {value: "1", text: "Januari"},
+                {value: "2", text: "Februari"},
+                {value: "3", text: "Maret"},
+                {value: "4", text: "April"},
+                {value: "5", text: "Mei"},
+                {value: "6", text: "Juni"},
+                {value: "7", text: "Juli"},
+                {value: "8", text: "Agustus"},
+                {value: "9", text: "September"},
+                {value: "10", text: "Oktober"},
+                {value: "11", text: "November"},
+                {value: "12", text: "Desember"}
+              ]
+          },
+          {type: 'newcolumn'},
+          {
+            type: 'combo',
+            name: 'thn',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            hidden: false,
+            options: [
+                {text: "2018", value: "2018"},
+                {text: "2019", value: "2019"},
+                {text: "2020", value: "2020"},
+                {text: "2021", value: "2021"},
+                {text: "2022", value: "2022"},
+                {text: "2023", value: "2023"},
+                {text: "2024", value: "2024"},
+                {text: "2025", value: "2025"}
+              ]
+          },
+          {type: 'newcolumn' },
+          {type: "button",offsetLeft:30, name: "search",value: "Get Data"},
+        ];
+
+        var my4FormSearch = my4Layout.cells("a").attachForm(form4Search);
+
+        my4FormSearch.setItemValue('bln', moment().format('M'));
+        my4FormSearch.setItemValue('thn', moment().format('YYYY'));
+
+        my4FormSearch.attachEvent("onChange", function (name, value, state){
+          if(name == 'jns') {
+            if(value == 'H') {
+              my4FormSearch.showItem('bln');
+              my4FormSearch.showItem('thn');
+            } else if(value == 'B') {
+              my4FormSearch.hideItem('bln');
+              my4FormSearch.showItem('thn');
+            } else if(value == 'T') {
+              my4FormSearch.hideItem('bln');
+              my4FormSearch.hideItem('thn');
+            }
+          }
+        });
+
+        my4FormSearch.attachEvent('onButtonClick', id => {
+          if (id === 'search') {
+            var jns = my4FormSearch.getItemValue('jns');
+            var bln = my4FormSearch.getItemValue('bln');
+            var thn = my4FormSearch.getItemValue('thn');
+            var sub = my4FormSearch.getItemValue('sub');
+            my4Layout.cells("b").attachURL("grafik_pecah.php?jns="+jns+"&bln="+bln+"&thn="+thn+"&sub="+sub, false, true);        
+          }
+        });
+
+        var jns = my4FormSearch.getItemValue('jns');
+        var tgl = my4FormSearch.getItemValue('tgl', true);
+        var tglb = my4FormSearch.getItemValue('tglb', true);
+        var bln = my4FormSearch.getItemValue('bln');
+        var thn = my4FormSearch.getItemValue('thn');
+        var sub = my4FormSearch.getItemValue('sub');
+        my4Layout.cells("b").attachURL("grafik_pecah.php?jns="+jns+"&bln="+bln+"&thn="+thn+"&sub="+sub, false, true);
+
+        var my5Layout = tabbar.tabs("t6").attachLayout({
+          pattern: "2E",
+          cells: [
+            {id: "a", header: false, height:50},
+            {id: "b", header: false}
+          ]
+        });
+
+        var my5FormSearch = my5Layout.cells("a").attachForm(form4Search);
+
+        my5FormSearch.setItemValue('bln', moment().format('M'));
+        my5FormSearch.setItemValue('thn', moment().format('YYYY'));
+
+        my5FormSearch.attachEvent("onChange", function (name, value, state){
+          if(name == 'jns') {
+            if(value == 'H') {
+              my5FormSearch.showItem('bln');
+              my5FormSearch.showItem('thn');
+            } else if(value == 'B') {
+              my5FormSearch.hideItem('bln');
+              my5FormSearch.showItem('thn');
+            } else if(value == 'T') {
+              my5FormSearch.hideItem('bln');
+              my5FormSearch.hideItem('thn');
+            }
+          }
+        });
+
+        my5FormSearch.attachEvent('onButtonClick', id => {
+          if (id === 'search') {
+            var jns = my5FormSearch.getItemValue('jns');
+            var bln = my5FormSearch.getItemValue('bln');
+            var thn = my5FormSearch.getItemValue('thn');
+            var sub = my5FormSearch.getItemValue('sub');
+            my5Layout.cells("b").attachURL("grafik_foc.php?jns="+jns+"&bln="+bln+"&thn="+thn+"&sub="+sub, false, true);        
+          }
+        });
+
+        var jns = my5FormSearch.getItemValue('jns');
+        var tgl = my5FormSearch.getItemValue('tgl', true);
+        var tglb = my5FormSearch.getItemValue('tglb', true);
+        var bln = my5FormSearch.getItemValue('bln');
+        var thn = my5FormSearch.getItemValue('thn');
+        var sub = my5FormSearch.getItemValue('sub');
+        my5Layout.cells("b").attachURL("grafik_foc.php?jns="+jns+"&bln="+bln+"&thn="+thn+"&sub="+sub, false, true);
+
+        var my6Layout = tabbar.tabs("t7").attachLayout({
+          pattern: "2E",
+          cells: [
+            {id: "a", header: false, height:50},
+            {id: "b", header: false}
+          ]
+        });
+
+        const form6Search = [
+          {type: "settings", position: "label-left",labelWidth: 50,inputWidth: 160},
+          {
+            type: 'combo',
+            name: 'jns',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            options: [
+                {text: "Ukuran", value: "U"},
+                {text: "Kategori", value: "A"}
+              ]
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'combo',
+            name: 'uk',
+            label: '',
+            required: true,
+            offsetLeft: 20,
+            inputWidth: 150,
+            options: [
+                {text: "ALL", value: "all"},
+                {text: "20 X 20", value: "05"},
+                {text: "30 X 30", value: "06"},
+                {text: "40 X 40", value: "07"},
+                {text: "20 X 25", value: "08"},
+                {text: "25 X 40", value: "09"},
+                {text: "25 X 25", value: "10"},
+                {text: "50 X 50", value: "11"},
+                {text: "25 X 50", value: "12"},
+                {text: "60 X 60", value: "13"}
+              ]
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'calendar',
+            offsetLeft: 20,
+            name: 'tgl',
+            label: '',
+            enableTodayButton: true,
+            required: true,
+            readonly: true,
+            dateFormat: "%Y-%m-%d",
+            calendarPosition: "right",
+            inputWidth: 100,
+            value: moment().subtract(5, 'day').format('YYYY-MM-DD')
+          },
+          { type: 'newcolumn' },
+          {
+            type: 'calendar',
+            offsetLeft: 20,
+            name: 'tglb',
+            label: 's/d',
+            enableTodayButton: true,
+            required: true,
+            readonly: true,
+            dateFormat: "%Y-%m-%d",
+            calendarPosition: "right",
+            inputWidth: 100,
+            value: moment().format('YYYY-MM-DD')
+          },
+          {type: 'newcolumn' },
+          {type: "button",offsetLeft:40, name: "search",value: "Get Data"},
+        ];
+
+        var my6FormSearch = my6Layout.cells("a").attachForm(form6Search);
+
+        my6FormSearch.attachEvent('onButtonClick', id => {
+          if (id === 'search') {
+            var jns = my6FormSearch.getItemValue('jns');
+            var uk = my6FormSearch.getItemValue('uk');
+            var tgl = my6FormSearch.getItemValue('tgl', true);
+            var tglb = my6FormSearch.getItemValue('tglb', true);
+            my6Layout.cells("b").attachURL("grafik_aging.php?jns="+jns+"&uk="+uk+"&tgl="+tgl+"&tglb="+tglb, false, true);        
+          }
+        });
+
+        var jns = my6FormSearch.getItemValue('jns');
+        var uk = my6FormSearch.getItemValue('uk');
+        var tgl = my6FormSearch.getItemValue('tgl', true);
+        var tglb = my6FormSearch.getItemValue('tglb', true);
+        my6Layout.cells("b").attachURL("grafik_aging.php?jns="+jns+"&uk="+uk+"&tgl="+tgl+"&tglb="+tglb, false, true);
+        
+        windows = new dhtmlXWindows();
+        window2 = new dhtmlXWindows();
+
+        const palletsByAreaCell = rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_AREA_ID);
+        setupPalletsByAreaCell(palletsByAreaCell);
+
+        const palletsByMotifCell = rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID);
+        setupPalletsByMotifCell(palletsByMotifCell);
+
+        fetchUserDetails();
+      }
+
+      function fetchUserDetails() {
+        return WMSApi.auth.getCurrentUserDetails()
+          .then(userDetails => {
+            SUBPLANTS_LOCATION.splice(0, SUBPLANTS_LOCATION.length, ...userDetails.subplants);
+            SUBPLANTS_PRODUCTION.splice(0, SUBPLANTS_PRODUCTION.length, ...userDetails.subplants_handover);
+
+            const palletsByAreaToolbar = rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_AREA_ID).getAttachedToolbar();
+            const palletsByMotifToolbar = rootLayout.cells(ROOT_LAYOUT_PALLETS_BY_MOTIF_ID).getAttachedToolbar();
+
+            // add all for location
+            if (SUBPLANTS_LOCATION.length > 1 || userDetails.subplants_other === true) {
+              palletsByAreaToolbar.addButtonTwoState('all', ++palletsByAreaToolbarItemCount, 'Semua');
+            }
+            if (userDetails.subplants_other === true) {
+              palletsByAreaToolbar.addButtonTwoState('other', ++palletsByAreaToolbarItemCount, 'Plant Lain');
+              palletsByAreaToolbar.addButtonTwoState('local', ++palletsByAreaToolbarItemCount, `Gudang P${SUBPLANTS_PRODUCTION[0][0]}`);
+            }
+
+            SUBPLANTS_LOCATION.forEach(subplant => {
+              palletsByAreaToolbar.addButtonTwoState(subplant, ++palletsByAreaToolbarItemCount, subplant);
+            });
+            const selectedLocationSubplant = SUBPLANTS_LOCATION.length > 1 ? 'all' : SUBPLANTS_LOCATION[0];
+            palletsByAreaToolbar.setItemState(selectedLocationSubplant, true);
+            palletsByAreaSelectedSubplant = selectedLocationSubplant;
+
+            // add all for production
+            if (SUBPLANTS_PRODUCTION.length > 1 || userDetails.subplants_other === true) {
+              palletsByMotifToolbar.addButtonTwoState('all', ++palletsByMotifToolbarItemCount, 'Semua');
+            }
+
+            if (userDetails.subplants_other === true) {
+              palletsByMotifToolbar.addButtonTwoState('other', ++palletsByMotifToolbarItemCount, 'Plant Lain');
+              palletsByMotifToolbar.addButtonTwoState('local', ++palletsByMotifToolbarItemCount, `Plant ${SUBPLANTS_PRODUCTION[0][0]}`);
+            }
+
+            SUBPLANTS_PRODUCTION.forEach(subplant => {
+              palletsByMotifToolbar.addButtonTwoState(subplant, ++palletsByMotifToolbarItemCount, subplant);
+            });
+            const selectedProductionSubplant = SUBPLANTS_PRODUCTION.length > 1 ? 'all' : SUBPLANTS_PRODUCTION[0];
+            palletsByMotifToolbar.setItemState(selectedProductionSubplant, true);
+            palletsByMotifSelectedSubplant = selectedProductionSubplant;
+
+
+            return {selectedLocationSubplant, selectedProductionSubplant};
+          })
+          .then(({selectedLocationSubplant, selectedProductionSubplant}) => {
+            fetchStockSummaryByMotif(selectedProductionSubplant);
+            fetchPalletsByAreaSummary(selectedLocationSubplant);
+          })
+          .catch(error => {
+            handleApiError(error)
+          })
+      }
+
+      // setup auto refresh
+      const DEFAULT_INTERVAL_LENGTH = 5 * 60 * 1000; // 5 mins
+      const refreshPalletByAreaSummaryTimer = new Timer(() => {
+        fetchPalletsByAreaSummary(palletsByAreaSelectedSubplant);
+      }, DEFAULT_INTERVAL_LENGTH);
+      const refreshPalletByMotifSummaryTimer = new Timer(() => {
+        fetchStockSummaryByMotif(palletsByMotifSelectedSubplant);
+      }, DEFAULT_INTERVAL_LENGTH);
+
+      return {
+        doOnLoad,
+        refreshPalletByAreaSummaryInterval: refreshPalletByAreaSummaryTimer,
+        refreshPalletByMotifSummaryInterval: refreshPalletByMotifSummaryTimer
+      }
+    }(moment, WMSApi, gridUtils, pdfMake, Cookies, Timer, handleApiError)
+  </script>
+</head>
+<body onload="dashboard.doOnLoad();">
+
+</body>
+</html>

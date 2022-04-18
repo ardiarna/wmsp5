@@ -1,0 +1,5 @@
+DROP VIEW summary_pallets_with_location_by_motif_size_shading;
+DROP VIEW summary_pallets_with_location_by_motif;
+DROP VIEW summary_pallets_with_location_by_area_row;
+DROP VIEW summary_pallets_with_location_by_area;
+DROP VIEW pallets_with_location;
